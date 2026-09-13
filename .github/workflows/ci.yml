@@ -20,7 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['20', '22']
+        # pnpm 11 (used both here and locally) requires Node >= 22.13, so a
+        # Node 20 leg cannot even install. The plugin itself still *runs* on
+        # Node >= 20 — that is what package.json `engines` declares; this
+        # matrix is about the toolchain that builds it.
+        node: ['22']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
