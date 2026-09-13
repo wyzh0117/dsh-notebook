@@ -257,7 +257,14 @@ window.__ModuleLoader__.load({ id: "dsh-notebook", factory: (require) => {
 
 ## 截图
 
-> 以下均为**真机实测截图**（DSH `0.1.1-rc.2`，未装任何 sidebar 产品，即 tier 3 自绘面板）。
+> 以下均为**真机实测截图**（DSH `0.1.1-rc.2`）。
+
+**tier 2 — 装了 `dsh-better-sidebar` 时融入其中**：展开它自己的右侧栏，「New tab」里在原有内容
+（Explorer / Source Control / Tasks / Terminal / Browser）之外多出一行 **Notebook**，点开就是本插件：
+
+![在 better-sidebar 中打开 Notebook](docs/images/tier2-better-sidebar.png)
+
+**tier 3 — 没装任何 sidebar 产品时自带侧边栏**：
 
 | | |
 |---|---|
@@ -265,6 +272,26 @@ window.__ModuleLoader__.load({ id: "dsh-notebook", factory: (require) => {
 | 侧边栏里的 Notebook 列表（`＋` 在右上角），展开时把会话列推挤 400px | 编辑容器：标题 + 正文 + 图片缩略图（粘贴/拖入/按钮三种入口） |
 | ![复制正文](docs/images/list-and-copy.png) | ![standalone 面板](docs/images/collapsed-button.png) |
 | 点标题后 toast「已复制正文（67 字）」——复制的是正文，不含标题 | 未装 sidebar 产品时的自绘面板：开合按钮固定在视口右上角 |
+
+## 验证状态
+
+在隔离环境（`DSH_HOME=/tmp/dshnb-home`，不碰用户正在用的实例）里真机跑过：
+
+| 项 | 方式 | 结果 |
+|---|---|---|
+| `tsc --noEmit` | 全仓 | 0 错误 |
+| 单元 / 组件测试 | `vitest run` | **90 passed (7 files)** |
+| 构建 | `tsc -p tsconfig.build.json && tsdown` | `lib/index.js`（ESM 54 KB）+ `lib/client.js`（CJS 111 KB） |
+| 客户端 bundle 形态 | CI 里用 stub `require` **实际执行** `lib/client.js` | `id=dsh-notebook`、`exports=apply,inject,…`、`inject===['slots','locale']`、零 `node:` require |
+| **tier 3**（无 sidebar 产品） | 真浏览器实测 | 开合按钮钉在视口右上角（`top:10,right:innerWidth-10`，28×28）；展开后 `--dsh-notebook-width: 400px` 且 `#root` 的 `margin-right` 变 400px（把会话列推挤）；左边缘 6px 拖拽条；收起时 `translateX(102%)` + `visibility:hidden` 且推挤归零 |
+| **tier 3 的 G3–G8** | 真浏览器逐条实测 | `＋` → 编辑器容器恰好 **1 个**；写入标题正文；贴入 png 成功、贴入 mp4 报「不支持视频文件」；「完成」后容器关闭、条目以标题陈列；点标题 → 剪贴板拿到**正文（不含标题）**且图片变 `[图片: nb-test-image.png]`，toast「已复制正文（67 字）」；点「编辑」→ 仍是 **1 个**容器且标题/正文/缩略图全部回填，改完再存列表更新 |
+| **tier 2**（装 `dsh-better-sidebar@0.12.1`） | 真浏览器实测 | 自绘面板**完全不挂载**（探测正确落到 service 层）；better-sidebar 的「New tab」里在 Explorer / Source Control / Tasks / Terminal / Browser 之外多出 **Notebook**；点开即在它的面板里渲染本插件，并读到同一份全局笔记 |
+| 持久化 | 重启 + 换安装通道后复测 | `notebook.json`、`.bak`、`notebook-attachments/<noteId>/<附件>.png` 落盘正确；换成 release tarball 安装后数据仍在，附件路由返回 `200 image/png` |
+| 发布产物 | 用 release tarball 装进干净 profile | `dsh plugin` 挂载成功，host 路由与客户端 bundle 均正常 |
+| CI | GitHub Actions | 绿 |
+
+tier 1（DSH ≥ 0.1.5-rc.1 的原生右侧栏）**只做了类型与调用序列层面的单测**——本机 DSH 是
+`0.1.1-rc.2`，装不到带 `ctx.sidebarRightTabs` 的版本，无法真机验证。
 
 ## FAQ
 
