@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+lib/
+dist/
+*.tsbuildinfo
+
+# test / tooling output
+coverage/
+.vitest/
+test-results/
+
+# logs
+*.log
+pnpm-debug.log*
+
+# editors & OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# internal orchestration artifacts (design + PR recon briefs)
+.briefs/
+.recon/

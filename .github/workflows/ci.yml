@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: typecheck · test · build (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            pnpm install
+          fi
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Assert build artifacts exist
+        run: |
+          set -euo pipefail
+          for f in lib/index.js lib/client.js lib/types/index.d.ts lib/types/client/index.d.ts; do
+            if [ ! -f "$f" ]; then
+              echo "::error file=$f::expected build artifact is missing"
+              exit 1
+            fi
+            echo "ok  $f  ($(wc -c < "$f") bytes)"
+          done
+
+      - name: Assert the client bundle is a valid module-loader factory
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+
+          const code = readFileSync('lib/client.js', 'utf8')
+          const fail = (msg) => { console.error(msg); process.exit(1) }
+
+          // The factory's `require` resolves module-table entries only, so a
+          // surviving node builtin would be an unrecoverable runtime error.
+          const leaked = code.match(/require\(["']node:[^"']+["']\)/g)
+          if (leaked) fail(`client bundle must not reference node builtins: ${leaked.join(', ')}`)
+
+          // Evaluate the bundle exactly the way the web shell does, then
+          // inspect what it registered. (Do not grep the banner: rolldown
+          // re-prints it, so its whitespace is not stable.)
+          let registration
+          globalThis.window = { __ModuleLoader__: { load(entry) { registration = entry } } }
+          new Function('window', code)(globalThis.window)
+
+          if (!registration) fail('lib/client.js never called window.__ModuleLoader__.load()')
+          if (registration.id !== 'dsh-notebook') fail(`registered id is ${registration.id}, expected the package name`)
+          if (typeof registration.factory !== 'function') fail('registration.factory is not a function')
+
+          const stubRequire = (id) => {
+            if (id === 'react') return { createElement() {}, useState() {}, useEffect() {}, useRef() {}, useSyncExternalStore() {}, Fragment: Symbol('Fragment') }
+            if (id === 'react/jsx-runtime') return { jsx() {}, jsxs() {}, Fragment: Symbol('Fragment') }
+            if (id === 'react-dom') return { createPortal() {} }
+            if (id === 'cordis') return {}
+            throw new Error(`factory required a non-module-table entry: ${id}`)
+          }
+          const exported = registration.factory(stubRequire)
+          if (typeof exported.apply !== 'function') fail('client bundle does not export apply()')
+          if (JSON.stringify(exported.inject) !== '["slots","locale"]') fail(`unexpected inject: ${JSON.stringify(exported.inject)}`)
+          console.log(`client bundle ok: id=${registration.id} exports=${Object.keys(exported).join(',')}`)
+          NODE

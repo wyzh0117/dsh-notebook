@@ -1,0 +1,14 @@
+# pnpm 11 reads project settings from this file, not from `.npmrc` (pnpm 11
+# consults `.npmrc` only for registry/auth settings).
+#
+# Why peer auto-install is off: `dsh-better-sidebar` is declared as an
+# *optional* peerDependency — the code never imports it, it duck-types
+# `ctx.betterSidebar` — but peer auto-install tries to resolve it anyway, picks
+# `dsh-better-sidebar@0.19.x`, and then cannot satisfy that package's own
+# `@deepseek-ai/*` peer ranges (`^0.1.5`): npm publishes those only as
+# prereleases (`0.1.5-rc.2`), and semver never matches a prerelease against a
+# non-prerelease range. The install dies with ERR_PNPM_NO_MATCHING_VERSION.
+# No narrower better-sidebar range helps (0.12–0.18 hit the same wall with
+# their own rc peer ranges). Every peer this repo actually builds against is an
+# explicit devDependency, so switching peer auto-install off costs nothing.
+autoInstallPeers: false
