@@ -15,13 +15,13 @@ was not actually verified.
 - [ ] Refactor / internal cleanup
 - [ ] Docs / build / CI only
 
-## Requirement coverage
+## Feature coverage
 
-dsh-notebook's v1 requirements are numbered `G1`–`G10` in
-[`docs/specs/v1-design.md`](../docs/specs/v1-design.md). If this PR touches
-behaviour, say which ones it affects.
+The user-visible contract is the **Features** table in
+[`README.md`](../README.md#features). If this PR touches behaviour, name the
+rows it affects and say whether they still hold.
 
-| Requirement | Status |
+| Feature row | Status |
 |---|---|
 | | |
 
@@ -39,13 +39,13 @@ behaviour, say which ones it affects.
 - [ ] `pnpm typecheck` passes — real output pasted below
 - [ ] `pnpm test` passes — real output pasted below
 - [ ] `pnpm build` passes and `lib/index.js`, `lib/client.js`, `lib/types/**` all exist
-- [ ] `lib/client.js` still starts with `window.__ModuleLoader__.load({ id: "dsh-notebook", factory: (require) => {` and the registered id still equals the package name
+- [ ] `lib/client.js` still registers itself through `window.__ModuleLoader__.load({ id: "dsh-notebook", factory: … })` and the registered id still equals the package name (assert it by **executing** the bundle — the banner whitespace is not stable, which is why CI does not grep it)
 - [ ] No new `node:*` import and no new non-module-table `@deepseek-ai/*` **value** import in `src/client/**`
 - [ ] No modification to DSH source (hard constraint)
 - [ ] No video/audio support path added (v1 explicitly excludes rich media)
 - [ ] No `cordis` (bare) added to `dependencies` / `peerDependencies` / `optionalDependencies`
 - [ ] No `preinstall` / `install` / `postinstall` / `prepare` script added
-- [ ] Docs updated if user-visible behaviour or settings changed (`README.md` + `README_EN.md`)
+- [ ] Docs updated if user-visible behaviour or settings changed (both `README.md` and `README.zh-CN.md`)
 
 ## Verification output
 
@@ -58,4 +58,4 @@ $ ls -l lib
 
 ## Notes for the reviewer
 
-<!-- Anything surprising, any intentional deviation from the spec, any follow-up you deliberately left out. -->
+<!-- Anything surprising, any intentional deviation from the documented behaviour, any follow-up you deliberately left out. -->

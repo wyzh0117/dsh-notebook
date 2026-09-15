@@ -2,8 +2,8 @@
  * Structural (duck-typed) faces for the client half of dsh-notebook.
  *
  * Why structure instead of the real DSH types: the client bundle is a CJS
- * closure factory handed to `window.__ModuleLoader__` (see
- * `.briefs/00-context.md`), and every DSH package is a **peer** — the shell
+ * closure factory handed to `window.__ModuleLoader__` (see the "Development"
+ * section of the README), and every DSH package is a **peer** — the shell
  * resolves the module-table entries, the plugin never does. Reaching for
  * `@deepseek-ai/dsh-client-ui-sidebar-right`'s own types would therefore buy a
  * compile-time dependency the runtime cannot honour, and would break the moment

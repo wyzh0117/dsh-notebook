@@ -43,7 +43,7 @@ The plugin picks one of three tiers at runtime:
 
 ## Expected behaviour
 
-<!-- If this is about one of the numbered requirements, mention it (e.g. "G4: video should be rejected"). -->
+<!-- If this is about one of the documented behaviours, name it (e.g. "video should be rejected", from the Features table in the README). -->
 
 ## Actual behaviour
 

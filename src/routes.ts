@@ -9,7 +9,7 @@
  * `{ kind: 'prefix', path: '/notebook/api' }`; the handler strips that prefix
  * itself, so `req.url` arrives as `/notebook/api/state` etc.
  *
- * Contract (see docs/specs/v1-design.md §6):
+ * Contract:
  *
  * | method | path                            | response                     |
  * |--------|---------------------------------|------------------------------|
