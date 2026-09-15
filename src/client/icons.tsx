@@ -156,3 +156,13 @@ export function CloseIcon({ size = 16 }: IconProps): JSX.Element {
     </svg>
   )
 }
+
+/** Speech bubble with an `@`: reference the note into the conversation. */
+export function QuoteIcon({ size = 16 }: IconProps): JSX.Element {
+  return (
+    <svg {...svgProps(size)}>
+      <path d="M2.5 4.25a1.75 1.75 0 0 1 1.75-1.75h7.5a1.75 1.75 0 0 1 1.75 1.75v4.5a1.75 1.75 0 0 1-1.75 1.75H6.6L3.4 13.1a.5.5 0 0 1-.9-.35z" />
+      <path d="M6.5 5.4a1.6 1.6 0 0 1 1.6 1.6c0 1.1-.8 1.9-1.9 2.1" />
+    </svg>
+  )
+}

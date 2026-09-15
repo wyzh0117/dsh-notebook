@@ -16,6 +16,7 @@ import { NotebookSettingsPanel } from '../NotebookSettingsPanel'
 import { NotebookView } from '../NotebookView'
 import { NotebookGlyph } from '../icons'
 import { t } from '../locales'
+import { attachSessionAutoOpen } from './autoOpen'
 import { disposeOf } from './detect'
 import type { BetterSidebarLike, ClientContext, NotebookHost, NotebookRuntime } from './types'
 
@@ -65,6 +66,12 @@ export function buildPluginToggles(): ReadonlyArray<Record<string, unknown>> {
       desc: () => t('settingsConfirmDeleteDesc'),
       type: 'switch',
     },
+    {
+      key: 'autoOpenOnNewSession',
+      title: () => t('settingsAutoOpen'),
+      desc: () => t('settingsAutoOpenDesc'),
+      type: 'switch',
+    },
   ]
 }
 
@@ -78,6 +85,7 @@ function createTabComponent(runtime: NotebookRuntime): (props: unknown) => unkno
       api: runtime.api,
       prefs,
       onPrefsChange: (patch) => runtime.setPrefs(patch),
+      composer: runtime.composer,
       visible,
     })
   }
@@ -116,33 +124,58 @@ export function createServiceHost(ctx: ClientContext, service: BetterSidebarLike
     tier: 'service',
 
     register(runtime: NotebookRuntime): () => void {
-      const dispose = disposeOf(
-        ctx.effect(
-          () =>
-            service.registerTab({
-              id: SERVICE_TAB_ID,
-              title: () => t('title'),
-              description: () => t('description'),
-              icon: createElement(NotebookGlyph, {}),
-              order: SERVICE_TAB_ORDER,
-              // ≡ dedupeKey: () => id — a second open focuses the live tab
-              // instead of minting a second Notebook (G8's "one container").
-              single: true,
-              component: createTabComponent(runtime),
-              settings: buildSettings(runtime, service),
-            }),
-          'dsh-notebook:service-tab',
+      const disposers: Array<() => void> = [
+        disposeOf(
+          ctx.effect(
+            () =>
+              service.registerTab({
+                id: SERVICE_TAB_ID,
+                title: () => t('title'),
+                description: () => t('description'),
+                icon: createElement(NotebookGlyph, {}),
+                order: SERVICE_TAB_ORDER,
+                // ≡ dedupeKey: () => id — a second open focuses the live tab
+                // instead of minting a second Notebook (G8's "one container").
+                single: true,
+                component: createTabComponent(runtime),
+                settings: buildSettings(runtime, service),
+              }),
+            'dsh-notebook:service-tab',
+          ),
         ),
-      )
+      ]
+
+      // "Open the notebook for a new session": the same watcher every tier
+      // uses, wired to this product's own `openTab`. A product without one
+      // never opens anything — and the preference is off by default anyway.
+      try {
+        disposers.push(
+          disposeOf(
+            ctx.effect(
+              () =>
+                attachSessionAutoOpen(ctx, runtime, () => {
+                  if (typeof service.openTab !== 'function') return false
+                  service.openTab({ type: SERVICE_TAB_ID, title: t('title') })
+                  return true
+                }),
+              'dsh-notebook:auto-open-on-new-session',
+            ),
+          ),
+        )
+      } catch (error) {
+        console.warn('[dsh-notebook] service auto-open watcher registration failed:', error)
+      }
 
       let released = false
       return () => {
         if (released) return
         released = true
-        try {
-          dispose()
-        } catch (error) {
-          console.warn('[dsh-notebook] service tab dispose failed:', error)
+        for (const off of disposers.reverse()) {
+          try {
+            off()
+          } catch (error) {
+            console.warn('[dsh-notebook] service tab dispose failed:', error)
+          }
         }
       }
     },

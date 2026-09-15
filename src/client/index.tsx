@@ -15,6 +15,8 @@
  */
 import { attachLocale } from './locales'
 import { createNotebookApi, type NotebookApiClient } from './api'
+import { createNotebookComposer } from './composer'
+import { createNoteCatalog, registerNoteReferenceSource } from './reference'
 import { DEFAULT_PREFS, type NotebookPrefs } from '../shared/types'
 import {
   createTierController,
@@ -78,6 +80,7 @@ export function mergePrefs(base: NotebookPrefs, patch: Partial<NotebookPrefs>): 
   }
   if (patch.confirmDelete !== undefined) next.confirmDelete = patch.confirmDelete === true
   if (patch.openOnStart !== undefined) next.openOnStart = patch.openOnStart === true
+  if (patch.autoOpenOnNewSession !== undefined) next.autoOpenOnNewSession = patch.autoOpenOnNewSession === true
   return next
 }
 
@@ -130,6 +133,11 @@ function activate(ctx: ClientContext, record: Activation, options?: { api?: Note
 
   // ── the per-activation runtime (never a module singleton) ────────────────
   const api: NotebookApiClient = options?.api ?? createNotebookApi()
+  // The composer bridge resolves `ctx.sessions` / `ctx.conversation` per call,
+  // so it stays correct across session switches and is inert wherever the
+  // conversation plugin is absent.
+  const composer = createNotebookComposer(ctx, (noteId, relPath) => api.attachmentUrl(noteId, relPath))
+  const catalog = createNoteCatalog(api)
   let prefs: NotebookPrefs = { ...DEFAULT_PREFS }
   const listeners = new Set<() => void>()
   const notify = (): void => {
@@ -138,6 +146,7 @@ function activate(ctx: ClientContext, record: Activation, options?: { api?: Note
 
   const runtime: NotebookRuntime = {
     api,
+    composer,
     // Stable object identity between changes: safe as a useSyncExternalStore snapshot.
     getPrefs: () => prefs,
     setPrefs(patch: Partial<NotebookPrefs>): void {
@@ -163,6 +172,16 @@ function activate(ctx: ClientContext, record: Activation, options?: { api?: Note
         listeners.delete(listener)
       }
     },
+  }
+
+  // ── the `@` reference source (tier-independent) ───────────────────────────
+  // Typing `@` in the composer lists notebook entries next to files and
+  // sessions; picking one inserts an atomic chip that serializes to the note's
+  // body at submit time. Registered through the effect so unload/HMR removes it.
+  try {
+    ctx.effect(() => registerNoteReferenceSource(ctx, catalog), 'dsh-notebook:@ reference source')
+  } catch (error) {
+    console.warn('[dsh-notebook] reference source registration failed:', error)
   }
 
   // ── three-tier registration ──────────────────────────────────────────────

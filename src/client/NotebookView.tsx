@@ -19,8 +19,9 @@ import type { NotebookApiClient } from './api'
 import { apiErrorMessage } from './api'
 import { NotebookEditor } from './NotebookEditor'
 import type { NotebookEditorMode } from './NotebookEditor'
-import { CloseIcon, EditIcon, NotebookGlyph, PlusIcon, TrashIcon, uiSizes, uiTokens } from './icons'
-import { buildClipboardText, copyText } from './clipboard'
+import { CloseIcon, EditIcon, NotebookGlyph, PlusIcon, QuoteIcon, TrashIcon, uiSizes, uiTokens } from './icons'
+import { buildBodyText, buildClipboardText, copyText } from './clipboard'
+import type { NotebookComposer } from './composer'
 import { t } from './locales'
 
 export interface NotebookViewProps {
@@ -29,6 +30,12 @@ export interface NotebookViewProps {
   onPrefsChange(patch: Partial<NotebookPrefs>): void
   visible: boolean
   onRequestClose?: () => void
+  /**
+   * The composer bridge (attach images / write the body into the draft / insert
+   * an `@` reference). Optional: a composition without the DSH conversation
+   * simply keeps the clipboard behaviour and hides the reference action.
+   */
+  composer?: NotebookComposer | null
 }
 
 type EditorState = { kind: 'closed' } | { kind: 'create' } | { kind: 'edit'; noteId: string }
@@ -77,7 +84,7 @@ function askConfirm(question: string): boolean {
 }
 
 export function NotebookView(props: NotebookViewProps): JSX.Element {
-  const { api, prefs, onRequestClose } = props
+  const { api, prefs, onRequestClose, composer } = props
   /** `visible === false` means hidden: the tiers keep this mounted but unseen. */
   const shown = props.visible !== false
 
@@ -174,7 +181,15 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
     [load, showToast],
   )
 
-  /** G7: the title is the copy affordance — the body goes to the clipboard. */
+  /**
+   * G7: the title is the copy affordance — the body (image markers rendered as
+   * `[图片: name]` lines) goes to the clipboard, and nothing else happens.
+   *
+   * Product decision (2026-09-15): clicking a title must NEVER write into the
+   * conversation composer on its own. The composer bridge still exposes the
+   * attachment path (see `composer.ts`), but it is deliberately unwired here —
+   * an explicit action would have to opt into it.
+   */
   const handleCopyBody = useCallback(
     async (note: NotebookNote) => {
       const text = buildClipboardText(note, prefs)
@@ -187,6 +202,20 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
       showToast(text.length > 0 ? t('copied', { n: text.length }) : t('copyEmpty'))
     },
     [prefs, showToast],
+  )
+
+  /** The reference action: an atomic `@` chip in the composer, like `@session`. */
+  const handleReference = useCallback(
+    (note: NotebookNote) => {
+      if (!composer || !composer.available()) {
+        showToast(t('refUnavailable'))
+        return
+      }
+      const label = note.title && note.title.length > 0 ? note.title : t('untitled')
+      const ok = composer.reference(note, buildBodyText(note))
+      showToast(ok ? t('referenced', { title: label }) : t('refFailed'))
+    },
+    [composer, showToast],
   )
 
   const handleDelete = useCallback(
@@ -253,6 +282,16 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
       cursor: 'pointer',
     }),
     [],
+  )
+
+  /**
+   * A row action: the ghost look, but never squeezed by a long title — the
+   * row wraps instead (`flexWrap` above), which keeps three actions and a title
+   * readable even in the narrowest panel.
+   */
+  const actionButton: CSSProperties = useMemo(
+    () => ({ ...ghostButton, flex: '0 0 auto', whiteSpace: 'nowrap' }),
+    [ghostButton],
   )
 
   const primaryButton: CSSProperties = useMemo(
@@ -409,14 +448,15 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
                     opacity: workingId === note.id ? 0.5 : 1,
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
                     <button
                       type="button"
                       data-testid="notebook-note-title"
                       onClick={() => void handleCopyBody(note)}
                       title={t('copyHint')}
                       style={{
-                        flex: '1 1 auto',
+                        flex: '1 1 140px',
+                        minWidth: 0,
                         border: 'none',
                         background: 'transparent',
                         padding: 0,
@@ -431,11 +471,24 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
                     >
                       {note.title && note.title.length > 0 ? note.title : t('untitled')}
                     </button>
+                    {composer ? (
+                      <button
+                        type="button"
+                        data-testid="notebook-note-reference"
+                        aria-label={t('referenceHint')}
+                        title={t('referenceHint')}
+                        onClick={() => handleReference(note)}
+                        style={actionButton}
+                      >
+                        <QuoteIcon size={11} />
+                        <span style={{ marginLeft: 4 }}>{t('reference')}</span>
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       data-testid="notebook-note-edit"
                       onClick={() => openEdit(note.id)}
-                      style={ghostButton}
+                      style={actionButton}
                     >
                       <EditIcon size={11} />
                       <span style={{ marginLeft: 4 }}>{t('edit')}</span>
@@ -444,7 +497,7 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
                       type="button"
                       data-testid="notebook-note-delete"
                       onClick={() => void handleDelete(note)}
-                      style={ghostButton}
+                      style={actionButton}
                     >
                       <TrashIcon size={11} />
                       <span style={{ marginLeft: 4 }}>{t('delete')}</span>

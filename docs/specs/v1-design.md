@@ -36,17 +36,22 @@
 
 | 事实 | 值 | 证据 |
 |---|---|---|
-| 本机 DSH | `0.1.1-rc.2` | `node ~/.local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js --version` |
+| 本机 DSH（实现时） | `0.1.1-rc.2` | `node ~/.local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js --version`（**事后注记**：随后升级到 `0.1.5-rc.2`，见下方两条） |
 | npm 上 DSH | `latest=0.1.5-rc.1`、`next=0.1.5-rc.2` | registry.npmjs.org dist-tags |
 | 本机 better-sidebar | `0.12.1`（自绘右侧栏） | `~/.dsh/profiles/web/package.json` |
 | better-sidebar 最新 | `0.19.x`，**要求 DSH ≥ 0.1.5-rc.1**，不再自绘右栏 | 上游 README IMPORTANT 段 |
-| 本机是否存在 `ctx.sidebarRightTabs` | **不存在**（0.1.1-rc.2 无右侧栏包） | 全量 grep `@deepseek-ai/*` 无命中 |
+| 本机是否存在 `ctx.sidebarRightTabs`（实现时） | **不存在**（0.1.1-rc.2 无右侧栏包） | 全量 grep `@deepseek-ai/*` 无命中（**事后注记**：升级到 `0.1.5-rc.2` 后 `@deepseek-ai/dsh-client-ui-sidebar-right` 随内核安装，该服务存在，tier 1 是本机生效层） |
 | `ctx.sidebarRightTabs` 属主 | `@deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-rc.2` | 已下载 tarball 于 `/tmp/dsh-new/sr` |
 | 本机可用 slots | `root` / `sidebar` / `conversation` / `details` / `shell.overlay` / `settings.plugin.item` / `tool.view.cordis` / `conversation.input.overlay` | 各包 `SlotMap` augmentation |
 | DSH_HOME 可重定向 | 环境变量 `DSH_HOME` | `@deepseek-ai/dsh-home-paths` |
 | DSH 存储约定 | `$DSH_HOME/storages/*.json` | 本机 `~/.dsh/storages/` |
 | gh 登录账号 | `wyzh0117`（id 101866233） | `gh auth status`（用户已确认用它，`wyzh843` 不存在） |
 | 用户已定决策 | 笔记**全局共享**；图片**存宿主磁盘+引用路径** | 会话内澄清 |
+
+> **事后注记（v1.1 期间复核，2026-09）：** 开发机已升级到 DSH **`0.1.5-rc.2`**，并且
+> `@deepseek-ai/dsh-client-ui-sidebar-right`（连同 `dsh-client-ui-conversation`、`dsh-client-ui-input-trigger`）**都已安装**：
+> `ctx.sidebarRightTabs` 存在，**tier 1 已成为本机实际生效层**，v1.1 用到的三个 seam 也都在场。
+> 上表是 v1 设计时的 recon 记录，保留作历史依据；现状与验证口径见 §10.6。
 
 ---
 
@@ -120,12 +125,19 @@ ctx.effect(() => ctx.sidebarRightTabs.register({
 `SidebarRightTabInfo`（含 `panel.id` / `tab.actions` / `tab.visible` / `tab.navigation` / `sidebar.expanded`）。
 
 > ⚠️ **实现前必读**：`.recon/dsh-plugin-architecture.md` 第 4 节给出 0.1.1-rc.2 的
-> `ctx.slots.register` 确切签名；`sidebar.right.pane.tab` 属于 0.1.5+，
-> 本机装不到，**tier 1 代码按类型声明写、用 fake ctx 做单测**，不追求本机真机跑通。
-> 允许 tier 1 只在「类型定义 + 注册调用序列」层面被测试覆盖。
+> `ctx.slots.register` 确切签名；`sidebar.right.pane.tab` 属于 0.1.5+。
+>
+> **事后注记（v1.1）**：开发机现已运行 `0.1.5-rc.2` 并装有 `dsh-client-ui-sidebar-right`，**tier 1 是本机实际生效层**；
+> 实现按 0.1.5-rc.2 的**真实类型声明**核对（见 `src/client/hosts/native.ts` 文件头），注册序列由
+> `test/tier-detect.test.ts` 用假 ctx 覆盖。**没有人工点过 GUI**：tier 1 以及 v1.1 的三个功能都没有 GUI 点击验证，
+> 真机只验证了「产物被服务」与「host 路由应答」，口径见 §10.6。
 
 **打开方式**：`ctx.sidebarRight.openTab('dsh-notebook', { params })`，需要时
 `ctx.sidebarRight.toggleExpanded()` 展开。
+
+**可见性（v1.1 澄清）**：tab 体从槽注入的 `useTabInfo()` 钩子读 `tab.visible` —— 0.1.5-rc.2 的 seat 以**空 owner share**
+（`renderSlot(seat, {}, …)`）渲染 tab，`props.tab.visible` 根本不会作为普通 prop 到达；两种情况各写一个组件分支以保持 hook 顺序稳定。
+`visible === false` 时 `NotebookView` **不加载也不轮询**（隐藏的 tab 一次 host 请求都不发），覆盖在 `test/native-tab-body.test.tsx`。
 
 ### 2.4 tier 2 — better-sidebar 服务注册
 
@@ -266,6 +278,9 @@ $DSH_HOME/storages/notebook-attachments/
 - 「＋」按钮 = G3 的入口；点击 → 打开编辑容器（新建模式）。
 - 标题行点击区域是**标题文字本身**（`<button>`，非整行），复制成功后给出 2s 的
   「已复制正文」toast；`编辑` / `删除` 是行尾的独立按钮。
+  > **v1.1 变更（见 §10.3 / §10.4）**：行内新增「对话引用」按钮。点标题**仍是本节描述的纯复制**——
+  > v1.1 一度把「含图片的记事」接到输入框，2026-09-15 的产品决定移除了那个入口：附件桥保留在 `composer.ts` 且仍有单测，
+  > 但没有任何 UI 调用它，所以标题动作永远只写剪贴板。
 
 ### 4.2 编辑容器（一个容器，两种模式）
 
@@ -319,6 +334,10 @@ $DSH_HOME/storages/notebook-attachments/
    失败（非安全上下文 / 权限被拒）→ 回退隐藏 `<textarea>` + `document.execCommand('copy')`。
 3. 成功后 toast「已复制正文（N 字）」；正文为空时也复制空串并提示「正文为空」。
 
+> **v1.1 变更（见 §10.3）**：本节就是点标题的**唯一行为**——v1.1 一度在「记事含输入框能收的图片」时改走附件路径，
+> 但 2026-09-15 的产品决定把入口移除，`NotebookView` 的标题动作回到 `handleCopyBody`（纯复制）。
+> 附件桥的代码与单测保留，等一个属于它自己的显式动作接线；当前没有任何 UI 能触发它。
+
 ---
 
 ## 5. 设置项定义（三个 tier 共用一份）
@@ -331,15 +350,17 @@ export interface NotebookPrefs {
   maxImagesPerNote: number                     // 默认 20
   confirmDelete: boolean                       // 默认 true
   openOnStart: boolean                         // tier 3 专用：启动即展开，默认 false
+  autoOpenOnNewSession: boolean                // v1.1：新会话成为 current 时打开记事本，默认 false（三层 tier 都接，见 §10）
 }
 ```
 
 - **单一数据源**：偏好的真值存在 host 的 `NotebookDoc.prefs`（跨 tier、跨浏览器一致）。
 - tier 2：通过 `registerTab({ settings: { pluginToggles, render } })` 暴露 UI，
   读写仍走 `PATCH /notebook/api/prefs`（**不用** better-sidebar 的 `pluginSettings`，
-  否则三层不一致）。
-- tier 3：注册到 DSH 设置壳的插件设置区，同一份字段。
-- tier 1：走 DSH 原生设置（`settings.plugin.item` 槽）。
+  否则三层不一致）。v1.1 起声明行是 5 项——**除 `openOnStart` 外的全部偏好**（`openOnStart` 只在独立层有意义）；
+  `render` 渲染的仍是同一份 `<NotebookSettingsPanel>`（6 项偏好都在）。
+- tier 1 / tier 3：v1.1 起注册**同一份**全局设置区（`settings.section` 槽，共用 `hosts/settingsSeat.ts`，
+  id 固定 `dsh-notebook`），字段与文案完全一致；槽未声明时注册是安全的 no-op。
 
 ---
 
@@ -396,10 +417,15 @@ dsh-notebook/
 │       ├── hosts/native.ts   # tier 1
 │       ├── hosts/service.ts  # tier 2
 │       ├── hosts/standalone.tsx  # tier 3（自绘右栏，UI 对齐 better-sidebar）
-│       ├── NotebookView.tsx  # 列表 + 「＋」+ 条目行
+│       ├── hosts/settingsSeat.ts # v1.1：tier 1 / tier 3 共用的全局设置区（settings.section）
+│       ├── hosts/autoOpen.ts # v1.1：新会话打开的监听（attachSessionAutoOpen，三层 tier 各接自己的手势）
+│       ├── NotebookView.tsx  # 列表 + 「＋」+ 条目行（对话引用 / 编辑 / 删除）
 │       ├── NotebookEditor.tsx# 唯一编辑容器（create/edit 共用）
+│       ├── NotebookSettingsPanel.tsx # 三个 tier 共用的设置面板
+│       ├── composer.ts       # v1.1：DSH 输入框桥（引用 chip 已接线；附件 / 正文路径已实现、未接线）
+│       ├── reference.ts      # v1.1：`@` 引用源 + 记事目录缓存
 │       ├── image.ts          # 图片校验/预览/dataURL
-│       ├── clipboard.ts      # 复制正文（含 execCommand 回退）
+│       ├── clipboard.ts      # 复制正文（含 execCommand 回退）+ 正文/引用文本转换
 │       ├── api.ts            # fetch 封装
 │       ├── locales.ts        # zh/en 词典
 │       └── icons.tsx         # 16px 线性图标（对齐 better-sidebar 观感）
@@ -407,7 +433,12 @@ dsh-notebook/
     ├── store.test.ts         # 原子写/CRUD/并发
     ├── attachments.test.ts   # 视频拒绝/穿越防护/大小上限
     ├── routes.test.ts        # HTTP 契约（node:http 起真实端口）
-    ├── tier-detect.test.ts   # 三层探测与只注册一次
+    ├── tier-detect.test.ts   # 三层探测与只注册一次（含 v1.1 设置区与自动打开）
+    ├── composer.test.ts      # v1.1：输入框桥（目标解析/附件/三条写入路径/detect span 换算）
+    ├── reference.test.ts     # v1.1：`@` 源（候选/chip/序列化只送正文/注册重试）
+    ├── auto-open.test.ts     # v1.1：新会话打开的监听与重试
+    ├── native-tab-body.test.tsx # v1.1：原生 tab 体经注入的 useTabInfo() 读可见性
+    ├── view-actions.test.tsx # v1.1：条目行的标题动作与「对话引用」按钮
     ├── editor.test.tsx       # G3–G8（jsdom + @testing-library/react）
     └── clipboard.test.ts     # 正文→剪贴板文本转换 + 回退路径
 ```
@@ -453,6 +484,10 @@ dsh-notebook/
 }
 ```
 
+> **事后注记（DSH `0.1.5-rc.2` 起）：** `@deepseek-ai/dsh-client-runtime` 在 `0.1.1-rc.2` 之后已停止发布，
+> `0.1.5-rc.2` 中不存在该包（`@deepseek-ai/dsh-client-web-react`、`@deepseek-ai/dsh-client-schema-form` 同样已消失）。
+> 上面的 `dsh.client.inject` 与 `peerDependencies` 现已不再包含前者。本节作为 v1 设计的历史记录保留。
+
 > ⚠️ **市场硬约束**（`.recon/dsh-market-pr.md` 复核）：`dependencies` / `peerDependencies` /
 > `optionalDependencies` 中**不得出现 `cordis`**；`scripts` 不得含 install 类钩子。
 > 以 recon 报告为准做最终调整。
@@ -484,7 +519,7 @@ DSH_HOME=/tmp/dshnb-home npx -y --package @deepseek-ai/dsh dsh web --port 3099
 - [ ] G4：粘贴/拖入 png 成功并出现缩略图；粘贴 mp4 被拒并提示。
 - [ ] G5：标题 + 正文都能写入。
 - [ ] G6：点「完成」后容器关闭，条目以标题形式陈列。
-- [ ] G7：点标题 → 剪贴板内容 == 正文（不含标题）。
+- [ ] G7：点标题 → 剪贴板内容 == 正文（不含标题）。（**始终成立**：v1.1 的附件桥没有 UI 入口，见 §10.3 / §10.6）
 - [ ] G8：点「编辑」→ DOM 中编辑器容器仍只有 1 个，内容为该条回填。
 - [ ] G1：装 better-sidebar 的环境里，展开侧边栏后能看到并打开 Notebook（tier 2 实测）。
 - [ ] G2：未装任何 sidebar 的环境里，右上角出现展开按钮，面板宽度可拖拽、窄屏全宽（tier 3 实测）。
@@ -493,3 +528,166 @@ DSH_HOME=/tmp/dshnb-home npx -y --package @deepseek-ai/dsh dsh web --port 3099
 - [ ] README 有安装说明、功能说明、与 better-sidebar 的关系说明。
 - [ ] `wyzh0117/dsh-notebook` 为 **private**，代码已推送。
 - [ ] dsh-market PR 已按 `.recon/dsh-market-pr.md` 的规范提交。
+
+---
+
+## 10. v1.1 · 对话联动
+
+v1.1 在 v1 之上加三处接缝——两处用户可见（C2 / C3），一处已实现但保留未接线（C1）；**不改动 v1 的任何既有契约**（数据模型、HTTP API、三层注册、G1–G10 全部保留）：
+
+| # | 能力 | 一句话 |
+|---|---|---|
+| C1 | 输入框附件桥（**已实现、未接线**） | 桥能把落盘图片注册成输入框草稿附件、把正文（图片标记已移除）追加进草稿；但产品决定（2026-09-15）移除了它唯一的入口，**点标题只复制**。§10.3 记录保留的能力与决定 |
+| C2 | `@` 引用记事 + 「对话引用」按钮 | 输入框里 `@` 能列出记事；插入的原子 chip 在发送时只序列化**正文**（标题绝不发给模型） |
+| C3 | 新会话自动打开侧边栏 | 新偏好 `autoOpenOnNewSession`（默认 `false`）；开启后每进入一个新会话就打开 Notebook 页——三层 tier 各用自己的打开手势 |
+
+用户可见的只有 C2 与 C3；C1 的代码与测试**刻意保留**（见 §10.3），等一个属于它自己的显式动作来接线。
+
+### 10.1 硬约束（决定了所有实现选择）
+
+1. **客户端 bundle 不能 import DSH 的 UI 包。** `lib/client.js` 是 CJS 闭包工厂，`require` 只解析模块表
+   （`react`、`react/jsx-runtime`、`react-dom`、`react-dom/client`、`@deepseek-ai/dsh-client-ui-slots`、
+   `@deepseek-ai/dsh-client-ui-primitives`），`package.json` 的 `dsh.client.inject` 也只有 `locale` 与 `slots`。
+   因此 `ctx.conversation` / `ctx.sessions` / `ctx.inputTriggers` **一律鸭子类型 + 逐成员可选 + 每次调用都 try/catch**：
+   宿主版本不同或服务缺席时，能力静默关闭并退回 v1 行为，绝不抛错、绝不阻塞激活。
+2. **不修改 DSH 源码**（v1 既有硬约束），只走公开 seam。
+3. **SVG 不能作为输入框附件。** 附件桥只收 `image/png` / `image/jpeg` / `image/webp` / `image/gif`
+   （`COMPOSER_IMAGE_MIMES`）；记事本身允许的 `image/svg+xml` 在桥上只能计入 `skipped`。
+   （这是桥的性质，不是「点标题时会跳过」——标题动作已经不接这条桥，见 §10.3。）
+4. **模型永远拿不到标题。** chip 的标签是标题（给人看），序列化只输出正文；这是明确的产品要求，不是遗漏。
+
+### 10.2 使用的公开 seam
+
+| seam | 形态 | 用途 | 缺席时 |
+|---|---|---|---|
+| `ctx.sessions` | `list.getSnapshot().current`、`list.subscribe(fn)`、`scope(id)` | 定位「当前会话」及其 Agent 作用域 ctx；订阅会话切换 | 没有输入框目标；自动打开静默 |
+| `ctx.conversation` | `createDrafts(sessionId, files)`、`releaseDraftAttachments(drafts)`、`input.for(actx)` | 生成 / 归还浏览器侧草稿附件（**只有未接线的附件桥用它**）；解析 per-session input facade（`@` 引用用它拿 `insertReference`） | 附件桥整体不可用（无 UI 入口）；`@` 引用退化为插入正文文本 |
+| input facade | `state.getSnapshot()`、`addAttachments(ids)`、`insertText(text, span)`、`insertReference(ref, span)`、`setDraft(text)` | 读草稿状态、放附件、写文本 / chip（`insertReference` 是 `@` 引用在用的那一个） | 同上 |
+| 会话作用域事件 | `actx.bail(actx, 'slash/input-insert-text' \| 'slash/input-insert-reference', payload)` | 在 caret span 上拼接（chip 保真），与触发管线选中菜单行时的调用完全一致 | 退到 facade 方法 |
+| `ctx.inputTriggers` | `registerSource(source)` | 注册 `@` 源 | 菜单里没有记事本分组 |
+
+`InputState.draft` 是**剪贴板投影**（chip 展开成整段 clipboardText），而编辑器 detect 投影里一个 chip 只占 1 个字符
+（U+FFFC）。`endOfDraftSpan()` 用 `draftRev` + 两种投影的长度差算出文末 caret span，
+**保证追加不会落进已有 chip 内部**；`phase` 不是 `plain` / `claimed`（例如正在提交）时一律拒绝写入。
+
+### 10.3 C1 — 输入框附件桥（**已实现，未接线**）
+
+> **产品决定（2026-09-15）：** 点标题**只复制**，绝不自己往输入框里写东西。
+> v1.1 曾把「含图片的记事」接到输入框（图片作附件、正文进草稿、够不到输入框再退回复制），
+> 该入口随后被这条决定移除：`NotebookView` 的标题动作现在是 `handleCopyBody`
+> （`buildClipboardText` + `copyText`，toast `copied` / `copyEmpty` / `copyFailed`），不再引用 composer 桥。
+> **桥与单测刻意保留**（接缝才是贵的那部分，且已有覆盖），等一个属于它自己的显式动作来接线。
+
+当前 UI 行为（也是测试断言的行为）：**点标题 = 纯复制**，含图片的记事也一样；没有 composer 桥时同样复制。
+
+保留的桥能力（对未来的调用方而言；`composer.ts` 的 `NotebookComposer` 文档注释记着同一条 WIRING NOTE）：
+
+| 成员 | 契约 |
+|---|---|
+| `attachImages(note, { max })` | 解析目标（`ctx.sessions` 有 current 会话 + `ctx.conversation` 在 + 该会话 input facade 可用）→ 逐个附件读字节：`GET /notebook/api/attachments/<noteId>/<file>`（`cache: 'no-store'`、`credentials: 'same-origin'`）包成 `File`（名字用存储名，缺失时按 MIME 合成 `image.<ext>`；张数上限取 `prefs.maxImagesPerNote`）→ `createDrafts(sessionId, files)` → `input.addAttachments(ids)`。图片只活在草稿里，发送时才上传 |
+| 附件格式 | 只收 `image/png` / `image/jpeg` / `image/webp` / `image/gif`（`COMPOSER_IMAGE_MIMES`）：记事里允许的 `image/svg+xml` 计入 `skipped`，读取失败计入 `failed`；一张都插不进去时返回 `no-target` / `no-images` / `fetch-failed`，**不谎报成功** |
+| 拒收 | `addAttachments` 返回 false 或抛 → `releaseDraftAttachments(drafts)` 归还草稿（不留 object URL / 上传残留），返回 `reason: 'refused'`；调用方若要回退，需自己执行复制 |
+| `appendText(text)` | 把 `buildBodyText(note)`（图片标记整段移除，避免与附件栏重复）写进草稿：优先会话作用域 `slash/input-insert-text`，其次 `input.insertText`，最后 `input.setDraft` 整篇重写（唯一会降级已有 chip 的路径）；`phase` 不是 `plain` / `claimed` 时拒绝写入 |
+| `reference(note, fallbackText?)` | **唯一被 UI 调用的成员**（见 §10.4） |
+
+随入口一并下线的东西：`attached` / `attachedPartial` / `attachSkipped` / `attachReadFailed` / `attachedBodySkipped` 这些提示文案
+已从 `locales.ts` 全部删除（含最后一个遗留键 `attachFailed`，最终产物里不再出现任何附件提示文案）；标题按钮 tooltip `copyHint` 回到「点击标题复制正文」。
+`endOfDraftSpan()` 的 detect-span 换算仍然被 `appendText` / `reference` 用到，因此它的单测（含空 clipboardText 的 chip）继续保留。
+
+### 10.4 C2 — `@` 引用与「对话引用」
+
+**`@` 源**（`reference.ts`，`registerNoteReferenceSource`）：
+
+| 项 | 值 |
+|---|---|
+| 名称 | `dsh-notebook`（`NOTE_REFERENCE_SOURCE`，同时是 chip 序列化的路由键） |
+| `trigger` | `'@'` |
+| `order` | `20`（内置源在 0） |
+| 候选 | 标题 + 正文摘要（标记去掉、空白压行、60 字截断），`section` = 本地化 `refSection`（记事本 / Notebook） |
+| 过滤 | 输入内容 trim + 小写后匹配标题或正文（大小写不敏感） |
+| 排序 / 上限 | `updatedAt` 倒序；最多 8 条（`NOTE_CANDIDATE_LIMIT`） |
+| 缓存 | 目录读一次服务 1500ms（`NOTE_CACHE_TTL_MS`），并发命中共享同一个 in-flight 读；`peek` 供同步取标签 |
+| 异常 | 查询 abort 或读取失败 → 该源返回空列表（不打断文件 / 会话菜单） |
+| 装配 | `ctx.inject(['inputTriggers'], …)` + `inputCtx.effect(() => service.registerSource(source))`。**注册被拒时重试**：source 名同时是序列化路由键，不能改成唯一名，所以 HMR 期上一个激活还没卸载导致的重复注册按 `REFERENCE_RETRY_MS = 500ms` 重试，超过 `REFERENCE_RETRY_LIMIT = 5` 次才告警放弃（一个消失的「记事本」分组对用户是不可见的故障）；dispose 时注销并丢弃目录缓存 |
+
+**chip 与序列化**：
+
+1. `onPick` → `{ insert: { source: 'dsh-notebook', ref: <noteId>, label: <标题｜无标题>, appearance: 'file', clipboardText } }`，
+   插入后是原子 inline chip（与 `@session` 同级）。
+2. `clipboardText` / 持久化形式是规范 mention `@[<标题>](dsh-notebook:<noteId>)`（标题里的 `[` `]` 剔除）。
+3. 发送时管线按 source 名调 `codec.serialize(ref)`：`catalog.read(ref)` → `buildReferenceText(note)`，
+   即**正文**（每个图片标记写成一行 `[图片: <name>]`），**不含标题**。
+4. 失败策略：`read` 返回 `null`（记事已删除）→ 序列化为空串；`read` 抛（真实读取失败）→ 异常冒泡，
+   发送被拦下并显示错误，**不**降级成 `@标题`。
+
+**行内「对话引用」按钮**（`NotebookView.handleReference`）：
+
+- 只有 composer 桥存在时才渲染；点击 → `composer.reference(note, buildBodyText(note))`：
+  先走 `slash/input-insert-reference` 插 chip（其次 facade 的 `insertReference`），都不行时追加正文文本。
+- 够不到输入框（`composer.available() === false`）→ toast `refUnavailable`（zh「当前没有可用的输入框」），不假装成功。
+- 成功 toast `referenced`({title})，失败 `refFailed`。
+- 行内动作区改为 `flexWrap`，标题 `flex: 1 1 140px`、按钮 `flex: 0 0 auto` + `nowrap`，
+  窄面板下三个按钮与标题都不被压扁。
+
+### 10.5 C3 — 新会话自动打开（默认关闭）
+
+- 偏好 `autoOpenOnNewSession`（`NotebookPrefs`，默认 `false`，host 持久化；host 与 client 两侧都做类型收窄，
+  `PATCH /notebook/api/prefs` 逐 key 校验——`test/routes.test.ts` 的 allowlist 守卫断言接受的 key 集合 == `Object.keys(DEFAULT_PREFS)`）。
+- **三层 tier 都接**，但各接自己的打开手势：监听本身是与宿主无关的 `attachSessionAutoOpen(ctx, runtime, open, options)`，
+  偏好闸门只在它里面出现一次；原生 tier 的 `attachAutoOpen` 是它在右侧栏上的薄封装。
+  某个载体打不开（例如 sidebar 产品没有 `openTab`）时该层的 `open()` 恒返回 false，监听静默失效，不假装成功。
+- 每层的手势：
+
+  | tier | `open()` 做什么 |
+  |---|---|
+  | native | `sidebarRight.openTab('dsh-notebook')`，并在 `isExpanded() === false` 时补一次 `toggleExpanded()`（打开一个用户看不见的 tab 不算打开） |
+  | service | `service.openTab({ type: 'dsh-notebook:notebook', title: t('title') })` |
+  | standalone | 自绘面板的 `control.setOpen(true)`（等价于点展开按钮） |
+
+- `createAutoOpenWatcher` 规则：
+
+  1. 激活时先把「已经是 current」的会话记为 seen —— **页面加载不弹面板**；
+  2. 订阅 `ctx.sessions.list.subscribe`，只有 current **变成另一个**才动作（同一会话的快照重复发布不算）；
+  3. `next === null`（hero 页）不动作；
+  4. 只有 `runtime.getPrefs().autoOpenOnNewSession === true` 才开；
+  5. `openTab` 在会话 surface 还没挂载时会抛 —— 按 `AUTO_OPEN_RETRY_MS = [0, 200, 500, 1200, 2500]` 重试，
+     会话再次变化或 dispose 立即放弃；
+  6. `open()` 返回 `false` 同样触发下一次重试（这就是 surface 未挂载的信号）。
+
+- `ctx.sessions` 缺席时静默；服务迟到时用 `ctx.inject(['sessions'], …)` 补上，并把「补上那一刻的 current」同样记为 seen。
+- 设置入口：`hosts/settingsSeat.ts` 的 `registerSettingsSection(ctx, runtime)` 注册全局 `settings.section` 槽
+  （id `dsh-notebook`，order 100），tier 1 与 tier 3 共用（§5）；tier 2 的 `pluginToggles` 声明 5 项
+  （除 `openOnStart` 外的全部偏好，`autoOpenOnNewSession` 在列），其 `render` 仍是同一份设置面板。
+  文案 key：`settingsAutoOpen`（zh「新会话自动打开记事本」/ en “Open the notebook for new sessions”）与 `settingsAutoOpenDesc`。
+
+### 10.6 交付物与验证
+
+| 类别 | 文件 |
+|---|---|
+| 新增实现 | `src/client/composer.ts`、`src/client/reference.ts`、`src/client/hosts/autoOpen.ts`、`src/client/hosts/settingsSeat.ts` |
+| 改动实现 | `NotebookView.tsx`、`hosts/native.ts`、`hosts/service.ts`、`hosts/standalone.tsx`、`index.tsx`、`clipboard.ts`（`buildBodyText` / `buildReferenceText`）、`locales.ts`、`NotebookSettingsPanel.tsx`、`icons.tsx`（`QuoteIcon`）、`src/shared/types.ts`、`src/store.ts` 与 `src/client/api.ts`、`src/routes.ts`（prefs 逐 key 校验） |
+| 测试 | `test/composer.test.ts`（31，桥级别，含未接线路径）、`test/reference.test.ts`（17）、`test/view-actions.test.tsx`（7，断言点标题只复制、不碰输入框）、`test/auto-open.test.ts`（11）、`test/native-tab-body.test.tsx`（3，新增），以及更新的 `test/tier-detect.test.ts`（14）与 `test/routes.test.ts`（24，含 prefs allowlist 守卫） |
+
+`pnpm test` 全绿：**164 passed (12 files)**。其中 `test/routes.test.ts` 的「accepts EVERY preference key the plugin exposes」
+断言 `PATCH /notebook/api/prefs` 接受的 key 集合 == `Object.keys(DEFAULT_PREFS)`——正是这条守卫抓出了 `/prefs`
+真实存在过的 bug（静默丢掉 `autoOpenOnNewSession`）。
+
+诚实声明：以上 seam 是**读 DSH `0.1.5-rc.2` 已发布的 client 包**（类型声明与实现）对齐出来的；开发机运行的也是 `0.1.5-rc.2`，
+且 `dsh-client-ui-conversation` / `dsh-client-ui-input-trigger` / `dsh-client-ui-sidebar-right` 均在场（tier 1 是实际生效层）。
+**C2 / C3 没有人工在真实 GUI 里点过**，C1 更是没有任何 UI 入口，全部行为只由单元 / 组件测试保证；
+已在运行中的实例上核对的只有两点：这份构建产物确实被服务
+（rev = `sha1("plugin-artifact" ‖ \0 ‖ len:lib/client.js ‖ len:lib/client.js.map)` 前 12 位，**每次重新构建都会变**，需按当前 `lib/` 现算；写这份文档时构建得到 `f2b51cf68d61`。`GET /plugins/??dsh-notebook/client.js&rev=…` 返回 200，
+字节里带 `slash/input-insert-reference` / `slash/input-insert-text` / `autoOpenOnNewSession` / `noteReferenceInsert` / `useTabInfo`，以及保留未接线的桥所用符号；已下线的 `attachSkipped` / `attachReadFailed` **不再出现**），
+以及 host 侧 `GET /notebook/api/state` 返回 200（真实文档）与 `GET /notebook/api/attachments/<noteId>/<file>` 返回 200 `image/png`（663081 字节）——即附件桥每张图要走的取字节路径（桥未接线，当前无 UI 调用）。
+
+### 10.7 已知限制（v1.1 有意留下）
+
+1. **未发送的 `@` 引用在刷新后退化成字面 mention。** DSH 把未发送草稿按**剪贴板投影**持久化在 `localStorage`
+   （`dsh.conversation`，按会话）。刷新后 chip 只剩 `@[标题](dsh-notebook:<noteId>)` 字面文本，而本插件**没有 host 半侧的
+   mention 解析器**——`dsh-session:` 那类 mention 由 `@deepseek-ai/dsh-session-reference` 在 `agent/pre-step` 展开，
+   我们没有接这条 seam——所以模型会收到字面 mention 而不是记事正文。
+   规避：发送前别刷新，或刷新后重新插入引用。**已确定的修法**是在 host 半侧接同一条 `agent/pre-step` seam 做展开；
+   v1.1 有意不做。
+2. **没有打开手势的载体上监听失效**：三层 tier 都接同一个监听，但 sidebar 产品若不提供 `openTab`（或宿主没有
+   `ctx.sessions`），该层静默不打开——不会假装成功。
+3. **能力随宿主而变**：宿主缺 `ctx.conversation` / `ctx.inputTriggers` / `ctx.sessions` 时，对应能力关闭并退回 v1 行为。

@@ -16,6 +16,7 @@ vi.mock('../src/client/NotebookSettingsPanel', () => ({ NotebookSettingsPanel: (
 import { apply, mergePrefs, reveal, tierOf } from '../src/client/index'
 import { createTierController } from '../src/client/hosts/detect'
 import type { NotebookApiClient } from '../src/client/api'
+import type { NotebookComposer } from '../src/client/composer'
 import type {
   ClientContext,
   NotebookHost,
@@ -24,6 +25,7 @@ import type {
   TabDescriptorLike,
 } from '../src/client/hosts/types'
 import { DEFAULT_PREFS } from '../src/shared/types'
+import type { NotebookPrefs } from '../src/shared/types'
 
 // ── fakes ───────────────────────────────────────────────────────────────────
 
@@ -46,6 +48,13 @@ interface SlotRegistration {
   disposed: boolean
 }
 
+/**
+ * Slots the shell declares as `kind: 'keyed'`, which the real registry
+ * addresses by `key` and rejects an `id`-only descriptor for. Kept here so the
+ * double fails the same way the shell does.
+ */
+const KEYED_SLOTS = new Set<string>(['sidebar.right.pane.tab'])
+
 interface FakeContext extends ClientContext {
   setService(name: string, value: unknown): void
   /** Fire every registered effect disposer in reverse order, like a cordis unload / HMR. */
@@ -65,6 +74,14 @@ function createFakeContext(initial: Record<string, unknown> = {}): FakeContext {
   const ctx: FakeContext = {
     slots: {
       register(options: SlotRegisterOptions, component: unknown): () => void {
+        // Mirror the real registry's load-time kind check (`SlotCore.register`):
+        // a keyed slot addresses its entries by `key`, and a descriptor without
+        // one THROWS. A permissive double here is how a list-shaped
+        // registration on the keyed `sidebar.right.pane.tab` once shipped and
+        // left the sidebar showing a Notebook tab nothing could render.
+        if (KEYED_SLOTS.has(options.name) && !('key' in options)) {
+          throw new Error(`slot "${options.name}" is keyed: register it under \`key\`, not \`id\``)
+        }
         const entry: SlotRegistration = { options, component, disposed: false }
         slotRegistrations.push(entry)
         return () => {
@@ -170,10 +187,10 @@ function createFakeSidebar(options?: { features?: readonly string[] }) {
   }
 }
 
-function createFakeApi(): NotebookApiClient {
+function createFakeApi(prefs: Partial<NotebookPrefs> = {}): NotebookApiClient {
   const api: NotebookApiClient = {
     getState: async () => ({
-      doc: { version: 1, notes: [], prefs: { ...DEFAULT_PREFS } },
+      doc: { version: 1, notes: [], prefs: { ...DEFAULT_PREFS, ...prefs } },
       degraded: false,
     }),
     createNote: async () => {
@@ -188,6 +205,36 @@ function createFakeApi(): NotebookApiClient {
       `/notebook/api/attachments/${encodeURIComponent(noteId)}/${encodeURIComponent(relPath)}`,
   }
   return api
+}
+
+/** A session-list double: `set()` publishes a change to its subscribers. */
+function createFakeSessions(initial: string | null = null) {
+  let current = initial
+  const listeners = new Set<() => void>()
+  return {
+    list: {
+      getSnapshot: () => ({ current }),
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+    },
+    set(next: string | null): void {
+      current = next
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
+
+/** The composer bridge stub: tier detection never talks to a real composer. */
+function createFakeComposer(): NotebookComposer {
+  return {
+    available: () => false,
+    sessionId: () => null,
+    attachImages: async () => ({ ok: false, inserted: 0, skipped: 0, failed: 0, reason: 'no-target' }),
+    appendText: () => false,
+    reference: () => false,
+  }
 }
 
 const shellRegistrations = (ctx: FakeContext): SlotRegistration[] =>
@@ -232,10 +279,15 @@ describe('three-tier sidebar detection', () => {
     expect(typeof def.title('')).toBe('string')
     expect(def.title('').length).toBeGreaterThan(0)
 
-    // phase two: the body goes into the keyed pane slot under the same id
+    // phase one: the body goes into the keyed pane slot under `key` — the id
+    // of the type in force, which is what the seat dispatches a tab on
     const pane = paneRegistrations(ctx)
     expect(pane).toHaveLength(1)
-    expect(pane[0]!.options.id).toBe('dsh-notebook')
+    const paneOptions = pane[0]!.options
+    if (paneOptions.name !== 'sidebar.right.pane.tab') {
+      throw new Error('expected the registration to target the keyed pane slot')
+    }
+    expect(paneOptions.key).toBe('dsh-notebook')
     expect(typeof pane[0]!.component).toBe('function')
 
     // no own shell, and the sidebar service was never touched
@@ -255,7 +307,76 @@ describe('three-tier sidebar detection', () => {
     expect(tierOf(ctx)).toBe('native')
   })
 
-  it('tier 2 — service: one single-instance tab carrying the four preference rows', () => {
+  it('tier 1 — auto-opens the notebook when a NEW session becomes current (opt-in)', async () => {
+    const tabs = createFakeNativeTabs()
+    const right = createFakeNativeRight()
+    const sessions = createFakeSessions(null)
+    const ctx = createFakeContext({
+      sidebarRightTabs: tabs,
+      sidebarRight: right,
+      sessions,
+    })
+
+    apply(ctx, { api: createFakeApi({ autoOpenOnNewSession: true }) })
+    await vi.advanceTimersByTimeAsync(0)
+
+    // the hero screen (no session) opens nothing, however the preference reads
+    expect(right.openTab).not.toHaveBeenCalled()
+
+    sessions.set('session-new')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(right.openTab).toHaveBeenCalledWith('dsh-notebook')
+
+    // switching away and back is one open per session, not one per render
+    sessions.set('session-other')
+    await vi.advanceTimersByTimeAsync(0)
+    sessions.set('session-new')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(right.openTab).toHaveBeenCalledTimes(3)
+  })
+
+  it('tier 1 — auto-open stays off by default', async () => {
+    const right = createFakeNativeRight()
+    const sessions = createFakeSessions('existing')
+    const ctx = createFakeContext({
+      sidebarRightTabs: createFakeNativeTabs(),
+      sidebarRight: right,
+      sessions,
+    })
+
+    apply(ctx, { api: createFakeApi() })
+    await vi.advanceTimersByTimeAsync(0)
+    sessions.set('session-new')
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(right.openTab).not.toHaveBeenCalled()
+  })
+
+  it('tier 1 — a rejected tab body never leaves a bodyless tab type behind', async () => {
+    const tabs = createFakeNativeTabs()
+    const ctx = createFakeContext({
+      sidebarRightTabs: tabs,
+      sidebarRight: createFakeNativeRight(),
+    })
+
+    // The shell rejects the body registration — which is exactly what a
+    // list-shaped (`id`/`order`) descriptor on the keyed pane slot does. The
+    // type must stay unregistered: a registered type whose body never landed
+    // still draws a Notebook tab, and opening it answers "nothing here can view
+    // this kind of content yet" instead of failing where the cause is visible.
+    ctx.slots.register = () => {
+      throw new Error('slot "sidebar.right.pane.tab" is keyed: missing `key`')
+    }
+
+    apply(ctx, { api: createFakeApi() })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(tabs.register).not.toHaveBeenCalled()
+    expect(paneRegistrations(ctx)).toHaveLength(0)
+    expect(tierOf(ctx)).toBeNull()
+  })
+
+  it('tier 2 — service: one single-instance tab carrying every preference row', () => {
     const sidebar = createFakeSidebar({ features: ['badge', 'pluginSettings'] })
     const ctx = createFakeContext({ betterSidebar: sidebar })
 
@@ -279,6 +400,7 @@ describe('three-tier sidebar detection', () => {
       'copyImagesAsName',
       'maxImagesPerNote',
       'confirmDelete',
+      'autoOpenOnNewSession',
     ])
 
     expect(shellRegistrations(ctx)).toHaveLength(0)
@@ -298,7 +420,7 @@ describe('three-tier sidebar detection', () => {
 
     const descriptor = sidebar.registerTab.mock.calls[0]![0]
     const settings = descriptor.settings as { pluginToggles: Array<{ key: string }> }
-    expect(settings.pluginToggles).toHaveLength(4)
+    expect(settings.pluginToggles).toHaveLength(5)
   })
 
   it('tier 3 — standalone: no service means our own shell, but only after the fallback delay', async () => {
@@ -308,6 +430,7 @@ describe('three-tier sidebar detection', () => {
     // both services are being watched for, and nothing is registered yet
     expect(ctx.observers.map((entry) => entry.deps[0]).sort()).toEqual([
       'betterSidebar',
+      'inputTriggers',
       'sidebarRightTabs',
     ])
     expect(tierOf(ctx)).toBeNull()
@@ -435,6 +558,7 @@ describe('three-tier sidebar detection', () => {
     const stablePrefs = { ...DEFAULT_PREFS }
     const runtime: NotebookRuntime = {
       api: createFakeApi(),
+      composer: createFakeComposer(),
       getPrefs: () => stablePrefs,
       setPrefs: () => {},
       subscribe: () => () => {},

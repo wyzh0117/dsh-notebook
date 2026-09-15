@@ -39,6 +39,13 @@ function collect() {
   const stablePrefs = { ...DEFAULT_PREFS }
   const runtime: NotebookRuntime = {
     api: { getState: async () => ({ doc: { version: 1, notes: [], prefs: stablePrefs }, degraded: false }) } as any,
+    composer: {
+      available: () => false,
+      sessionId: () => null,
+      attachImages: async () => ({ ok: false, inserted: 0, skipped: 0, failed: 0, reason: 'no-target' }),
+      appendText: () => false,
+      reference: () => false,
+    },
     getPrefs: () => stablePrefs,
     setPrefs: () => {},
     subscribe: () => () => {},

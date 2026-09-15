@@ -32,6 +32,13 @@ export interface NotebookPrefs {
   confirmDelete: boolean
   /** Standalone tier only: expand the self-drawn sidebar on startup. */
   openOnStart: boolean
+  /**
+   * Native right-sidebar tier only: when a session becomes current (a freshly
+   * created one, or one the user switched to), expand the sidebar and open the
+   * Notebook page. Off by default — a panel nobody asked for must never appear
+   * on its own. Other tiers have their own panel lifetime (`openOnStart`).
+   */
+  autoOpenOnNewSession: boolean
 }
 
 /** Default preferences, mirrored by the host schema and the client settings panel. */
@@ -41,6 +48,7 @@ export const DEFAULT_PREFS: NotebookPrefs = {
   maxImagesPerNote: 20,
   confirmDelete: true,
   openOnStart: false,
+  autoOpenOnNewSession: false,
 }
 
 /** Hard cap for one uploaded image (bytes). Enforced on both halves. */

@@ -14,7 +14,7 @@
  *   Consequences, all load-bearing:
  *   * `codeSplitting: false` — the factory's `require` cannot resolve relative
  *     chunk URLs in the browser, so everything must land in one script;
- *   * module-table specifiers (`react`, `cordis`, the listed `@deepseek-ai/*`
+ *   * module-table specifiers (`react`, `react-dom`, the listed `@deepseek-ai/*`
  *     runtime packages) stay external and are resolved by the shell;
  *   * everything else (our own code, any helper library) inlines;
  *   * no `node:*` import may survive into the bundle.
@@ -32,18 +32,22 @@ import type { UserConfig } from 'tsdown'
  * Module specifiers the web shell shares into the frozen module table. These
  * must stay external so the bundle uses the shell's single React/runtime
  * instance; anything else is inlined.
+ *
+ * Every entry must be a key of the shell's `PLATFORM_MODULES` seed table (DSH
+ * 0.1.5-rc.2: `react`, `react/jsx-runtime`, `react-dom`, `react-dom/client`,
+ * `@deepseek-ai/cordis`, `@deepseek-ai/dsh-client-store`,
+ * `@deepseek-ai/dsh-client-ui-slots`, `@deepseek-ai/dsh-client-ui-primitives`,
+ * `@deepseek-ai/dsh-client-ui-dockkit`). A specifier that is neither imported
+ * by `src/client/**` nor in that table is dead config: the bundle would emit a
+ * `require` the shell cannot answer.
  */
 const CLIENT_EXTERNALS = [
   'react',
   'react/jsx-runtime',
   'react-dom',
   'react-dom/client',
-  'cordis',
   '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-schema-form',
-  '@deepseek-ai/dsh-client-runtime/client',
 ]
 
 /** Registered bundle id — keep in sync with `package.json` `name`. */

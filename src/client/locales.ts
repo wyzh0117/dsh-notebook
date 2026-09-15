@@ -55,6 +55,12 @@ export const zh: Record<string, string> = {
   cancel: '取消',
   edit: '编辑',
   delete: '删除',
+  reference: '对话引用',
+  referenceHint: '把这条记事作为 @ 引用插入输入框',
+  refSection: '记事本',
+  referenced: '已引用「{title}」',
+  refUnavailable: '当前没有可用的输入框',
+  refFailed: '插入引用失败，请重试',
   saved: '已保存',
   untitled: '无标题',
   copyHint: '点击标题复制正文',
@@ -99,6 +105,8 @@ export const zh: Record<string, string> = {
   settingsConfirmDeleteDesc: '删除记事时先弹窗确认',
   settingsOpenOnStart: '启动即展开侧边栏',
   settingsOpenOnStartDesc: '仅在没有其它侧边栏产品的独立模式下生效',
+  settingsAutoOpen: '新会话自动打开记事本',
+  settingsAutoOpenDesc: '每进入一个新会话时自动打开记事本（原生侧栏会展开面板；默认关闭）',
 
   // Aliases: the declarative settings rows of the service tier address the same
   // four preferences by their bare field names.
@@ -107,6 +115,7 @@ export const zh: Record<string, string> = {
   maxImagesPerNote: '单条图片上限',
   confirmDeleteLabel: '删除前确认',
   openOnStart: '启动即展开侧边栏',
+  autoOpenOnNewSession: '新会话自动打开记事本',
 }
 
 export const en: Record<string, string> = {
@@ -140,6 +149,12 @@ export const en: Record<string, string> = {
   cancel: 'Cancel',
   edit: 'Edit',
   delete: 'Delete',
+  reference: 'Reference',
+  referenceHint: 'Insert this note into the composer as an @ reference',
+  refSection: 'Notebook',
+  referenced: 'Referenced “{title}”',
+  refUnavailable: 'No composer is available in this session',
+  refFailed: 'Could not insert the reference — please retry',
   saved: 'Saved',
   untitled: 'Untitled',
   copyHint: 'Click the title to copy the body',
@@ -180,12 +195,15 @@ export const en: Record<string, string> = {
   settingsConfirmDeleteDesc: 'Ask for confirmation when a note is deleted',
   settingsOpenOnStart: 'Expand the sidebar on start',
   settingsOpenOnStartDesc: 'Only used by the standalone tier (no other sidebar product installed)',
+  settingsAutoOpen: 'Open the notebook for new sessions',
+  settingsAutoOpenDesc: 'Open the Notebook whenever a new session becomes current (the native sidebar expands its panel; off by default)',
 
   sortOrder: 'Sort order',
   copyImagesAsName: 'Write image names when copying',
   maxImagesPerNote: 'Images per note',
   confirmDeleteLabel: 'Confirm before deleting',
   openOnStart: 'Expand the sidebar on start',
+  autoOpenOnNewSession: 'Open the notebook for new sessions',
 }
 
 /** The last locale service handed to {@link attachLocale} (null = default zh). */

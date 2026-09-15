@@ -174,6 +174,21 @@ export function NotebookSettingsPanel(props: NotebookSettingsPanelProps): JSX.El
           />
         }
       />
+
+      <Row
+        label={t('settingsAutoOpen')}
+        description={t('settingsAutoOpenDesc')}
+        control={
+          <input
+            data-testid="notebook-setting-autoOpenOnNewSession"
+            type="checkbox"
+            aria-label={t('settingsAutoOpen')}
+            checked={prefs.autoOpenOnNewSession === true}
+            onChange={(event) => onChange({ autoOpenOnNewSession: event.target.checked })}
+            style={styles.check}
+          />
+        }
+      />
     </div>
   )
 }

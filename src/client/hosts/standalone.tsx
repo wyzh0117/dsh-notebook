@@ -32,11 +32,12 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from 'react'
-import { NotebookSettingsPanel } from '../NotebookSettingsPanel'
 import { NotebookView } from '../NotebookView'
 import { NotebookGlyph, PanelRightOutline16 } from '../icons'
 import { t } from '../locales'
+import { attachSessionAutoOpen } from './autoOpen'
 import { disposeOf } from './detect'
+import { registerSettingsSection } from './settingsSeat'
 import type { ClientContext, NotebookHost, NotebookRuntime } from './types'
 
 /** Panel geometry contract (mirrors better-sidebar's `PANEL_MIN/MAX/DEFAULT`). */
@@ -579,29 +580,12 @@ function createShellComponent(runtime: NotebookRuntime, control: PanelControl): 
             api: runtime.api,
             prefs,
             onPrefsChange: (patch) => runtime.setPrefs(patch),
+            composer: runtime.composer,
             visible: open,
             onRequestClose: () => control.setOpen(false),
           }),
         ),
       ),
-    )
-  }
-}
-
-/** The tier-3 settings seat: DSH 0.1.1-rc.2's only usable plugin settings slot. */
-function createSettingsSection(runtime: NotebookRuntime): () => ReactNode {
-  return function NotebookSettingsSection(): ReactNode {
-    const prefs = useSyncExternalStore(runtime.subscribe, runtime.getPrefs)
-    return createElement(
-      'div',
-      {
-        'data-dsh-notebook': 'settings',
-        style: { display: 'flex', flexDirection: 'column', padding: '4px 0 12px' },
-      },
-      createElement(NotebookSettingsPanel, {
-        prefs,
-        onChange: (patch) => runtime.setPrefs(patch),
-      }),
     )
   }
 }
@@ -629,23 +613,29 @@ export function createStandaloneHost(ctx: ClientContext): NotebookHost {
       )
 
       // An undeclared `settings.section` slot means this callback never runs —
-      // a safe no-op, never an error (DSH 0.1.1-rc.2 declares it; see
-      // dsh-screenshot's bundle for the same call).
-      disposers.push(
-        disposeOf(
-          ctx.slots.inject('settings.section', () =>
-            ctx.slots.register(
-              {
-                name: 'settings.section',
-                id: 'dsh-notebook',
-                order: 100,
-                label: () => t('settingsSection'),
-              },
-              createSettingsSection(runtime),
+      // a safe no-op, never an error (DSH declares it; the native tier uses the
+      // same helper for the same seat).
+      disposers.push(registerSettingsSection(ctx, runtime))
+
+      // "Open the notebook for a new session": this tier's gesture is its own
+      // panel's open state (the panel persists across sessions, so a session
+      // change merely re-opens it when the user asked for that).
+      try {
+        disposers.push(
+          disposeOf(
+            ctx.effect(
+              () =>
+                attachSessionAutoOpen(ctx, runtime, () => {
+                  control.setOpen(true)
+                  return true
+                }),
+              'dsh-notebook:auto-open-on-new-session',
             ),
           ),
-        ),
-      )
+        )
+      } catch (error) {
+        console.warn('[dsh-notebook] standalone auto-open watcher registration failed:', error)
+      }
 
       let released = false
       return () => {

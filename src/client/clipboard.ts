@@ -28,6 +28,34 @@ const MARKER_RE = /!\[([^\]]*)\]\(attachment:([^)]*)\)/g
  * the title is never involved.
  */
 export function buildClipboardText(note: NotebookNote, prefs: NotebookPrefs): string {
+  const copyNames = prefs?.copyImagesAsName !== false // default true when unknown
+  return convertMarkers(note, copyNames ? 'names' : 'drop')
+}
+
+/**
+ * The note's body with every image marker REMOVED, title excluded. This is what
+ * travels into the composer draft when the images themselves are attached
+ * (`[图片: …]` placeholders would duplicate what the attachment rail already
+ * shows).
+ */
+export function buildBodyText(note: NotebookNote): string {
+  return convertMarkers(note, 'drop')
+}
+
+/**
+ * The model-facing text of a referenced note: the body with every image marker
+ * rendered as one `[图片: <name>]` line. The TITLE is deliberately excluded —
+ * a `@` reference contributes the entry's content, not its label.
+ */
+export function buildReferenceText(note: NotebookNote): string {
+  return convertMarkers(note, 'names')
+}
+
+/**
+ * Shared marker conversion. `'names'` keeps one `[图片: name]` line per marker,
+ * `'drop'` removes marker lines (and stray inline markers) entirely; both trim.
+ */
+function convertMarkers(note: NotebookNote, mode: 'names' | 'drop'): string {
   const body = typeof note?.body === 'string' ? note.body : ''
   if (body.length === 0) return ''
 
@@ -36,13 +64,13 @@ export function buildClipboardText(note: NotebookNote, prefs: NotebookPrefs): st
     if (attachment && typeof attachment.id === 'string') names.set(attachment.id, attachment.name ?? '')
   }
 
-  const copyNames = prefs?.copyImagesAsName !== false // default true when unknown
-  const converted = copyNames
-    ? body.replace(MARKER_RE, (_match, alt: string, id: string) => {
-        const name = names.get(id) ?? (typeof alt === 'string' ? alt : '')
-        return t('imageLine', { name: name.length > 0 ? name : t('image') })
-      })
-    : body.replace(MARKER_LINE_RE, '').replace(MARKER_RE, '')
+  const converted =
+    mode === 'names'
+      ? body.replace(MARKER_RE, (_match, alt: string, id: string) => {
+          const name = names.get(id) ?? (typeof alt === 'string' ? alt : '')
+          return t('imageLine', { name: name.length > 0 ? name : t('image') })
+        })
+      : body.replace(MARKER_LINE_RE, '').replace(MARKER_RE, '')
 
   return converted.trim()
 }

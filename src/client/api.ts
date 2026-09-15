@@ -92,6 +92,10 @@ function normalizePrefs(raw: unknown): NotebookPrefs {
         : DEFAULT_PREFS.maxImagesPerNote,
     confirmDelete: typeof source.confirmDelete === 'boolean' ? source.confirmDelete : DEFAULT_PREFS.confirmDelete,
     openOnStart: typeof source.openOnStart === 'boolean' ? source.openOnStart : DEFAULT_PREFS.openOnStart,
+    autoOpenOnNewSession:
+      typeof source.autoOpenOnNewSession === 'boolean'
+        ? source.autoOpenOnNewSession
+        : DEFAULT_PREFS.autoOpenOnNewSession,
   }
 }
 

@@ -272,6 +272,19 @@ describe('concurrency', () => {
     expect(onDisk.notes).toHaveLength(20)
   })
 
+  it('round-trips the new-session auto-open preference (off unless asked for)', async () => {
+    const store = createNotebookStore({ homeDir: home, warn: () => undefined })
+    // The default is off: a panel nobody asked for must never open itself.
+    expect((await store.getPrefs()).autoOpenOnNewSession).toBe(false)
+
+    const prefs = await store.updatePrefs({ autoOpenOnNewSession: true })
+    expect(prefs.autoOpenOnNewSession).toBe(true)
+    expect((await readDoc(notebookPaths(home).filePath)).prefs.autoOpenOnNewSession).toBe(true)
+
+    const cleared = await store.updatePrefs({ autoOpenOnNewSession: false })
+    expect(cleared.autoOpenOnNewSession).toBe(false)
+  })
+
   it('interleaves creates and pref updates without losing any write', async () => {
     const store = createNotebookStore({ homeDir: home, warn: () => undefined })
     await Promise.all([

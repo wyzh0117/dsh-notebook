@@ -409,11 +409,49 @@ describe('notebook HTTP API', () => {
     expect(after.body).not.toContain('attachment:local-')
   })
 
+  it('accepts EVERY preference key the plugin exposes (allowlist drift guard)', async () => {
+    // One non-default value per key in `DEFAULT_PREFS`. The key-set equality
+    // below is the point: adding a preference without teaching the `/prefs`
+    // PATCH allowlist about it (or without adding it here) fails this test,
+    // because a dropped key is invisible — the client's optimistic write is
+    // then clobbered by the server's unchanged response.
+    const patch: Record<string, string | number | boolean> = {
+      sortOrder: 'created',
+      copyImagesAsName: false,
+      maxImagesPerNote: 7,
+      confirmDelete: false,
+      openOnStart: true,
+      autoOpenOnNewSession: true,
+    }
+    expect(Object.keys(patch).sort()).toEqual(Object.keys(DEFAULT_PREFS).sort())
+
+    const response = await fetch(`${harness.base}/prefs`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { prefs: Record<string, unknown> }
+    for (const [key, value] of Object.entries(patch)) {
+      expect([key, body.prefs[key]]).toEqual([key, value])
+    }
+
+    const persisted = (await (await fetch(`${harness.base}/state`)).json()) as { doc: NotebookDoc }
+    for (const [key, value] of Object.entries(patch)) {
+      expect([key, (persisted.doc.prefs as unknown as Record<string, unknown>)[key]]).toEqual([key, value])
+    }
+  })
+
   it('patches prefs and validates every field', async () => {
     const ok = await fetch(`${harness.base}/prefs`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sortOrder: 'title', confirmDelete: false, maxImagesPerNote: 3 }),
+      body: JSON.stringify({
+        sortOrder: 'title',
+        confirmDelete: false,
+        maxImagesPerNote: 3,
+        autoOpenOnNewSession: true,
+      }),
     })
     expect(ok.status).toBe(200)
     const body = (await ok.json()) as { prefs: typeof DEFAULT_PREFS }
@@ -421,9 +459,15 @@ describe('notebook HTTP API', () => {
     expect(body.prefs.confirmDelete).toBe(false)
     expect(body.prefs.maxImagesPerNote).toBe(3)
     expect(body.prefs.copyImagesAsName).toBe(true)
+    // Every boolean preference the plugin exposes must survive the PATCH
+    // allowlist — a key missing from it is silently dropped, which is how
+    // `autoOpenOnNewSession` once became a switch that could never turn on.
+    expect(body.prefs.autoOpenOnNewSession).toBe(true)
+    expect(body.prefs.openOnStart).toBe(false)
 
     const persisted = (await (await fetch(`${harness.base}/state`)).json()) as { doc: NotebookDoc }
     expect(persisted.doc.prefs.sortOrder).toBe('title')
+    expect(persisted.doc.prefs.autoOpenOnNewSession).toBe(true)
 
     for (const bad of [
       { sortOrder: 'nope' },
@@ -432,6 +476,7 @@ describe('notebook HTTP API', () => {
       { maxImagesPerNote: 2.5 },
       { maxImagesPerNote: 1000 },
       { openOnStart: 1 },
+      { autoOpenOnNewSession: 'yes' },
     ]) {
       const response = await fetch(`${harness.base}/prefs`, {
         method: 'PATCH',

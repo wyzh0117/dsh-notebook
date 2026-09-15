@@ -527,7 +527,7 @@ export function createNotebookRouter(options: NotebookRouterOptions): NotebookRe
       }
       patch.sortOrder = value
     }
-    for (const key of ['copyImagesAsName', 'confirmDelete', 'openOnStart'] as const) {
+    for (const key of ['copyImagesAsName', 'confirmDelete', 'openOnStart', 'autoOpenOnNewSession'] as const) {
       if (!(key in body)) continue
       const value = body[key]
       if (typeof value !== 'boolean') throw new HttpError(400, 'BAD_REQUEST', `prefs.${key} must be a boolean`)

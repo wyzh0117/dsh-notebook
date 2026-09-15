@@ -3,17 +3,21 @@
  *
  * Why structure instead of the real DSH types: the client bundle is a CJS
  * closure factory handed to `window.__ModuleLoader__` (see
- * `.briefs/00-context.md`), and this machine runs DSH 0.1.1-rc.2 — the newer
- * packages (`@deepseek-ai/dsh-client-ui-sidebar-right`) do not resolve locally.
- * Declaring only the members we actually touch keeps the bundle free of
- * `@deepseek-ai/*` value imports and lets `test/tier-detect.test.ts` drive the
- * whole activation with a fake context.
+ * `.briefs/00-context.md`), and every DSH package is a **peer** — the shell
+ * resolves the module-table entries, the plugin never does. Reaching for
+ * `@deepseek-ai/dsh-client-ui-sidebar-right`'s own types would therefore buy a
+ * compile-time dependency the runtime cannot honour, and would break the moment
+ * a host ships a different version. Declaring only the members we actually
+ * touch keeps the bundle free of `@deepseek-ai/*` value imports (verified
+ * against DSH 0.1.5-rc.2's published declarations) and lets
+ * `test/tier-detect.test.ts` drive the whole activation with a fake context.
  *
  * The `*Like` faces are also deliberately NOT imported from `dsh-better-sidebar`:
  * we refuse to build a compile-time dependency on another third-party plugin
  * (its package is an optional peer, imported only as documentation).
  */
 import type { NotebookApiClient } from '../api'
+import type { NotebookComposer } from '../composer'
 import type { NotebookPrefs } from '../../shared/types'
 
 /** Which registration tier the current host settled on (spec §2.1). */
@@ -25,6 +29,12 @@ export type SidebarTier = 'native' | 'service' | 'standalone'
  */
 export interface NotebookRuntime {
   api: NotebookApiClient
+  /**
+   * The composer bridge (attach images / append draft text / insert an `@`
+   * reference). Every tier passes it to the note list, so the list itself never
+   * touches DSH services.
+   */
+  composer: NotebookComposer
   /** Current preferences. Stable reference between changes (safe as a `useSyncExternalStore` snapshot). */
   getPrefs(): NotebookPrefs
   /** Optimistically apply a patch locally, then persist it through the host API. */
@@ -83,17 +93,42 @@ export interface SidebarRightLike {
   isExpanded(): boolean
 }
 
-/** Registration options accepted by `ctx.slots.register` (subset of the real options). */
-export interface SlotRegisterOptions {
-  name: string
-  id: string
-  order?: number
-  /** Chain/cell rank; only used through the `name`/`id`/`order` triple here. */
-  priority?: number
-  /** Section heading (used by the `settings.section` seat). */
-  label?: string | (() => string)
-  inject?: (...args: never[]) => Record<string, unknown>
-}
+/** The cell kind of each slot this plugin contributes to, as the shell declares it. */
+export type KeyedSlotName = 'sidebar.right.pane.tab'
+export type ListSlotName = 'shell.overlay' | 'settings.section'
+
+/**
+ * Registration options accepted by `ctx.slots.register` (the subset in use).
+ *
+ * Modelled as a UNION over the slot name because the real registry validates
+ * the descriptor against the target slot's declared kind at load time and
+ * throws on a mismatch: a **keyed** slot addresses its entries by `key` and a
+ * registration without one throws; a **list** slot addresses them by `id` and
+ * sorts them by `order`. `name` alone is not enough to go on — the same
+ * `{ id, order }` that is correct for `shell.overlay` is a *failed
+ * registration* on the keyed `sidebar.right.pane.tab`, and the sidebar's answer
+ * is a Notebook tab that can never render rather than an error anyone can see.
+ *
+ * Discriminating on `name` keeps that mistake a compile error here.
+ */
+export type SlotRegisterOptions =
+  /** Keyed: dispatched by the `id` of the type in force, registered under `key`. */
+  | {
+      name: KeyedSlotName
+      key: string
+      /** Cell shadowing rank (ascending, default 0). */
+      priority?: number
+      inject?: (...args: never[]) => Record<string, unknown>
+    }
+  /** List: one row per `id`, shown in ascending `order`. */
+  | {
+      name: ListSlotName
+      id: string
+      order?: number
+      /** Section heading (used by the `settings.section` seat). */
+      label?: string | (() => string)
+      inject?: (...args: never[]) => Record<string, unknown>
+    }
 
 /** The DSH client slot registry face we consume (`register` returns the disposer). */
 export interface SlotsLike {
@@ -127,4 +162,10 @@ export interface ClientContext {
   effect(callback: EffectCallback, label?: string): unknown
   get(name: string, strict?: boolean): unknown
   inject(deps: readonly string[], callback: (ctx: ClientContext) => unknown): unknown
+  /**
+   * Bail-mode event dispatch (`actx.bail(actx, name, payload)`), the plumbing
+   * behind the conversation input machine's scoped mutation events. Optional:
+   * a context without it simply cannot receive programmatic composer edits.
+   */
+  bail?(thisArg: unknown, name: string, payload: unknown): unknown
 }
