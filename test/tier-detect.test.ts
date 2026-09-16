@@ -237,8 +237,38 @@ function createFakeComposer(): NotebookComposer {
   }
 }
 
+/**
+ * The tier-3 self-drawn shell entry.
+ *
+ * Narrowed by `id` on purpose: since v0.2.0 the tier-independent capture
+ * surfaces also live in `shell.overlay`, so "is a shell registered?" can no
+ * longer be answered by the slot name alone.
+ */
 const shellRegistrations = (ctx: FakeContext): SlotRegistration[] =>
-  ctx.slotRegistrations.filter((entry) => entry.options.name === 'shell.overlay')
+  ctx.slotRegistrations.filter(
+    (entry) => entry.options.name === 'shell.overlay' && entry.options.id === 'dsh-notebook-shell',
+  )
+
+/**
+ * The list-slot id of a registration (`''` for a keyed one, which has none).
+ *
+ * The options union discriminates on the slot name rather than on `id`, so
+ * every id read has to narrow first — exactly the compile-time discipline the
+ * real registry rewards.
+ */
+const listId = (entry: SlotRegistration): string => ('id' in entry.options ? entry.options.id : '')
+
+/**
+ * The v0.2.0 capture surfaces (floating selection action + answer action).
+ * Registered once per activation whatever the tier, so every tier test must
+ * find them and must never mistake them for a sidebar carrier.
+ */
+const captureRegistrations = (ctx: FakeContext): SlotRegistration[] =>
+  ctx.slotRegistrations.filter(
+    (entry) =>
+      listId(entry) === 'dsh-notebook-capture' ||
+      entry.options.name === 'conversation.chat.assistant-actions',
+  )
 
 const paneRegistrations = (ctx: FakeContext): SlotRegistration[] =>
   ctx.slotRegistrations.filter((entry) => entry.options.name === 'sidebar.right.pane.tab')
@@ -395,12 +425,16 @@ describe('three-tier sidebar detection', () => {
     const settings = descriptor.settings as {
       pluginToggles: Array<{ key: string; type?: string }>
     }
+    // Every preference except `openOnStart`, which only means something in the
+    // standalone tier (the one tier that does not go through this declaration).
     expect(settings.pluginToggles.map((row) => row.key)).toEqual([
       'sortOrder',
       'copyImagesAsName',
       'maxImagesPerNote',
       'confirmDelete',
       'autoOpenOnNewSession',
+      'selectionToNotebook',
+      'messageToNotebook',
     ])
 
     expect(shellRegistrations(ctx)).toHaveLength(0)
@@ -420,7 +454,7 @@ describe('three-tier sidebar detection', () => {
 
     const descriptor = sidebar.registerTab.mock.calls[0]![0]
     const settings = descriptor.settings as { pluginToggles: Array<{ key: string }> }
-    expect(settings.pluginToggles).toHaveLength(5)
+    expect(settings.pluginToggles).toHaveLength(7)
   })
 
   it('tier 3 — standalone: no service means our own shell, but only after the fallback delay', async () => {
@@ -434,7 +468,11 @@ describe('three-tier sidebar detection', () => {
       'sidebarRightTabs',
     ])
     expect(tierOf(ctx)).toBeNull()
-    expect(ctx.slotRegistrations).toHaveLength(0)
+    // Nothing sidebar-shaped yet, but the tier-independent capture surfaces are
+    // already registered: they belong to the shell, not to the carrier probe.
+    expect(paneRegistrations(ctx)).toHaveLength(0)
+    expect(shellRegistrations(ctx)).toHaveLength(0)
+    expect(captureRegistrations(ctx)).toHaveLength(2)
 
     await vi.advanceTimersByTimeAsync(699)
     expect(tierOf(ctx)).toBeNull()
@@ -453,8 +491,64 @@ describe('three-tier sidebar detection', () => {
     ).toBe(true)
   })
 
-  it('late upgrade — a sidebar service arriving after the shell tears the shell down first', async () => {
+  it('v0.2.0 — registers both capture surfaces once, with the contract the shell expects', async () => {
+    const ctx = createFakeContext({ sidebarRightTabs: createFakeNativeTabs() })
+    apply(ctx, { api: createFakeApi() })
+    await vi.advanceTimersByTimeAsync(0)
+
+    const overlay = ctx.slotRegistrations.find((entry) => listId(entry) === 'dsh-notebook-capture')
+    expect(overlay?.options.name).toBe('shell.overlay')
+    expect(typeof overlay?.component).toBe('function')
+    // Above the tier-3 shell entry (order 5), so the floating action and its
+    // toasts draw over the panel instead of under it.
+    if (overlay?.options.name !== 'shell.overlay') throw new Error('expected the overlay list slot')
+    expect(overlay.options.order).toBe(20)
+
+    const answer = ctx.slotRegistrations.find(
+      (entry) => entry.options.name === 'conversation.chat.assistant-actions',
+    )
+    expect(typeof answer?.component).toBe('function')
+    if (answer?.options.name !== 'conversation.chat.assistant-actions') {
+      throw new Error('expected the assistant-actions list slot')
+    }
+    expect(answer.options.id).toBe('dsh-notebook-save')
+    // The shipped feedback pair registers at order 10; anything above it lands
+    // at the end of the actions band.
+    expect(answer.options.order).toBeGreaterThan(10)
+
+    // The business face travels through `inject`, so the entry carries the
+    // capabilities it actually uses.
+    const face = answer.options.inject?.() as
+      | { capture?: { save?: unknown }; getPrefs?: unknown; subscribe?: unknown }
+      | undefined
+    expect(typeof face?.capture?.save).toBe('function')
+    expect(typeof face?.getPrefs).toBe('function')
+    expect(typeof face?.subscribe).toBe('function')
+  })
+
+  it('v0.2.0 — a late tier upgrade never re-registers the capture surfaces', async () => {
     const ctx = createFakeContext()
+    apply(ctx, { api: createFakeApi() })
+    await vi.advanceTimersByTimeAsync(700)
+    expect(tierOf(ctx)).toBe('standalone')
+    expect(captureRegistrations(ctx)).toHaveLength(2)
+
+    const sidebar = createFakeSidebar()
+    ctx.setService('betterSidebar', sidebar)
+    ctx.observers.find((entry) => entry.deps[0] === 'betterSidebar')!.fire()
+    expect(tierOf(ctx)).toBe('service')
+
+    // The capture surfaces belong to the shell, not to the winning carrier: a
+    // second copy would render two floating actions and two action buttons.
+    expect(captureRegistrations(ctx)).toHaveLength(2)
+    expect(captureRegistrations(ctx).filter((entry) => entry.disposed)).toHaveLength(0)
+
+    // …and they go away with the activation, not with the tier.
+    ctx.disposeEffects()
+    expect(captureRegistrations(ctx).filter((entry) => entry.disposed)).toHaveLength(2)
+  })
+
+  it('late upgrade — a sidebar service arriving after the shell tears the shell down first', async () => {    const ctx = createFakeContext()
     apply(ctx, { api: createFakeApi() })
     await vi.advanceTimersByTimeAsync(700)
 

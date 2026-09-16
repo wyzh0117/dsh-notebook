@@ -96,6 +96,12 @@ function normalizePrefs(raw: unknown): NotebookPrefs {
       typeof source.autoOpenOnNewSession === 'boolean'
         ? source.autoOpenOnNewSession
         : DEFAULT_PREFS.autoOpenOnNewSession,
+    selectionToNotebook:
+      typeof source.selectionToNotebook === 'boolean'
+        ? source.selectionToNotebook
+        : DEFAULT_PREFS.selectionToNotebook,
+    messageToNotebook:
+      typeof source.messageToNotebook === 'boolean' ? source.messageToNotebook : DEFAULT_PREFS.messageToNotebook,
   }
 }
 

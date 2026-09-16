@@ -12,6 +12,12 @@
  *   again by the host with a 415).
  * - previews are `blob:` object URLs, revoked on removal and on unmount.
  *
+ * Body box (v0.2.1): the textarea is content-sized — {@link applyBodyHeight}
+ * measures it on every edit, on mount, and whenever the text re-wraps or the
+ * viewport-relative cap moves, so a short note shows a short box and a long one
+ * grows until the cap, past which it scrolls internally instead of eating the
+ * panel.
+ *
  * Save protocol: the body is re-composed from the textarea plus the image list,
  * so it always carries one `![name](attachment:<id>)` marker per image. Images
  * that already live on the host keep their real id and the whole request stays a
@@ -23,11 +29,12 @@
  *
  * Purity: no `node:*`, no `@deepseek-ai/*` value imports.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { NotebookAttachment, NotebookNote, NotebookPrefs } from '../shared/types'
 import type { NewAttachmentInput, NotebookApiClient } from './api'
 import { apiErrorMessage } from './api'
+import { BODY_MIN_HEIGHT, applyBodyHeight, bodyMaxHeight, viewportHeight } from './autoGrow'
 import { CloseIcon, ImageIcon, NotebookGlyph, uiSizes, uiTokens } from './icons'
 import {
   MAX_IMAGE_MB,
@@ -142,13 +149,76 @@ export function NotebookEditor(props: NotebookEditorProps): JSX.Element {
   const [draft, setDraft] = useState<Draft>(() => draftFrom(mode, api))
   const [error, setError] = useState<EditorError | null>(null)
   const [saving, setSaving] = useState(false)
+  /**
+   * "Discard the unsaved draft?" — asked by this editor's own dialog.
+   *
+   * v0.2.2: the prompt used to be `window.confirm`, a modal that blocks the
+   * renderer thread. In a host that never draws a native dialog (a webview, a
+   * sandboxed frame) that block never resolves and the whole page freezes on
+   * Cancel/Escape, so the question is drawn in-view like the delete prompt.
+   */
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false)
 
   const fileInput = useRef<HTMLInputElement | null>(null)
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null)
   /** Every object URL this instance owns, so unmount cannot leak one. */
   const ownedUrls = useRef<Set<string>>(new Set())
   const imagesRef = useRef<EditorImage[]>(draft.images)
   const initialRef = useRef<Draft>(draft)
   const lastModeKey = useRef(modeKey)
+
+  /** Size the body box to its content, right now (idempotent, never throws). */
+  const syncBodyHeight = useCallback(() => {
+    applyBodyHeight(bodyRef.current, bodyMaxHeight(viewportHeight()))
+  }, [])
+
+  // Content → height (v0.2.1). `useLayoutEffect` on purpose: the resize must
+  // land in the same commit as the text, otherwise the previous height paints
+  // for one frame — the flicker this patch exists to remove. Runs on mount too,
+  // so an edited note opens at its own height instead of a six-row default.
+  useLayoutEffect(() => {
+    syncBodyHeight()
+  }, [draft.text, syncBodyHeight])
+
+  // Width (and viewport) → height. A narrower panel re-wraps the text, so the
+  // same content needs more lines, and the cap itself is viewport-relative; both
+  // signals re-sync here. Height-only notifications are our own doing and are
+  // ignored — that filter, together with the unchanged-cap check, is what keeps
+  // the observer from looping on its own resize.
+  useLayoutEffect(() => {
+    const element = bodyRef.current
+    if (!element) return
+    const disposers: Array<() => void> = []
+    if (typeof ResizeObserver === 'function') {
+      let lastWidth = -1
+      let lastMax = -1
+      const observer = new ResizeObserver((entries) => {
+        const rect = entries[0]?.contentRect
+        // `contentRect` is content-box while `clientWidth` is padding-box, so
+        // the two are never mixed into one comparison: without an entry the
+        // width counts as unknown and only the cap check decides.
+        const width = rect ? rect.width : Number.NaN
+        const max = bodyMaxHeight(viewportHeight())
+        const widthChanged = Number.isFinite(width) && width !== lastWidth
+        if (!widthChanged && max === lastMax) return
+        if (Number.isFinite(width)) lastWidth = width
+        lastMax = max
+        syncBodyHeight()
+      })
+      observer.observe(element)
+      disposers.push(() => observer.disconnect())
+    }
+    // The cap is viewport-relative, and a window resize does not have to change
+    // the box's own size (its height is content-driven), so the viewport is
+    // watched directly — with or without ResizeObserver.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', syncBodyHeight)
+      disposers.push(() => window.removeEventListener('resize', syncBodyHeight))
+    }
+    return () => {
+      for (const dispose of disposers) dispose()
+    }
+  }, [syncBodyHeight])
 
   useEffect(() => {
     imagesRef.current = draft.images
@@ -296,24 +366,53 @@ export function NotebookEditor(props: NotebookEditorProps): JSX.Element {
     }
   }, [api, canSave, draft.text, draft.title, mode, onSaved])
 
+  /**
+   * Cancel / close / Escape: a dirty draft asks first, through the dialog
+   * below; a pristine one leaves immediately. Nothing here can block.
+   */
   const handleCancel = useCallback(() => {
     if (dirty) {
-      const confirmFn = typeof window !== 'undefined' ? window.confirm : undefined
-      if (typeof confirmFn === 'function') {
-        let accepted = true
-        try {
-          accepted = confirmFn.call(window, t('discardConfirm'))
-        } catch {
-          accepted = true // jsdom / locked-down embeds: never trap the user
-        }
-        if (!accepted) return
-      }
+      setConfirmingDiscard(true)
+      return
     }
     onCancel()
   }, [dirty, onCancel])
 
+  /** "Discard": leave the editor and drop the draft (owned URLs are released on unmount). */
+  const discardDraft = useCallback(() => {
+    setConfirmingDiscard(false)
+    onCancel()
+  }, [onCancel])
+
+  /** "Keep editing": take the question away and stay in the editor. */
+  const keepEditing = useCallback(() => {
+    setConfirmingDiscard(false)
+  }, [])
+
+  /**
+   * Hand the keyboard back to the body box when the discard question closes.
+   *
+   * The overlay owns focus while it is up, and a dismissed overlay drops focus
+   * to `<body>` — which would silently kill this editor's Escape and
+   * Cmd/Ctrl+Enter shortcuts (a native modal kept focus, so this is the one
+   * behaviour that must be put back by hand).
+   */
+  const askedDiscard = useRef(false)
+  useEffect(() => {
+    if (confirmingDiscard) {
+      askedDiscard.current = true
+      return
+    }
+    if (!askedDiscard.current) return
+    askedDiscard.current = false
+    bodyRef.current?.focus()
+  }, [confirmingDiscard])
+
   const handleKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      // While the discard question is up, the dialog owns the keyboard (it also
+      // stops propagation; this guard keeps a stray event from re-asking).
+      if (confirmingDiscard) return
       if (event.key === 'Escape') {
         event.preventDefault()
         handleCancel()
@@ -324,7 +423,7 @@ export function NotebookEditor(props: NotebookEditorProps): JSX.Element {
         void handleDone()
       }
     },
-    [handleCancel, handleDone],
+    [confirmingDiscard, handleCancel, handleDone],
   )
 
   const titleText = mode.kind === 'edit' ? t('editorEdit') : t('editorCreate')
@@ -432,11 +531,15 @@ export function NotebookEditor(props: NotebookEditorProps): JSX.Element {
         <div style={{ height: 8 }} />
 
         <textarea
+          ref={bodyRef}
           data-testid="notebook-body"
           aria-label={t('bodyLabel')}
           placeholder={t('bodyPlaceholder')}
           value={draft.text}
-          rows={6}
+          // One row, so the box's intrinsic height cannot out-vote a
+          // measurement; the CSS `min-height` below is what guarantees a
+          // usable field before the first measurement and without one.
+          rows={1}
           onChange={(event) => setDraft((previous) => ({ ...previous, text: event.target.value }))}
           onPaste={(event) => {
             const files = filesFromDataTransfer(event.clipboardData)
@@ -452,7 +555,18 @@ export function NotebookEditor(props: NotebookEditorProps): JSX.Element {
             event.preventDefault()
             addFiles(filesFromDataTransfer(event.dataTransfer))
           }}
-          style={{ ...fieldStyle, resize: 'vertical', minHeight: 120 }}
+          style={{
+            ...fieldStyle,
+            // The height is content-driven (v0.2.1): the drag handle is gone
+            // because a manual height would be overwritten by the next
+            // measurement, and `applyBodyHeight` owns `height`/`maxHeight`/
+            // `overflowY` from here on. `minHeight` is the floor the measurement
+            // clamps to, and it holds the box open on the very first paint —
+            // before the layout effect has run — as well as in any runtime that
+            // cannot measure.
+            resize: 'none',
+            minHeight: BODY_MIN_HEIGHT,
+          }}
         />
 
         {draft.images.length > 0 ? (
@@ -590,6 +704,87 @@ export function NotebookEditor(props: NotebookEditorProps): JSX.Element {
         }}
         style={{ display: 'none' }}
       />
+
+      {/*
+        The unsaved-draft prompt (v0.2.2): drawn here, never by
+        `window.confirm`. "Keep editing" is the default action (it holds focus),
+        so an impatient Enter cannot throw the draft away.
+      */}
+      {confirmingDiscard ? (
+        <div
+          data-testid="notebook-confirm-discard"
+          role="alertdialog"
+          aria-modal="true"
+          aria-label={t('discardConfirm')}
+          onKeyDown={(event) => {
+            // The editor's own Escape / Cmd+Enter shortcuts stay behind this
+            // dialog: behind it, Escape would only reopen the question.
+            event.stopPropagation()
+            if (event.key === 'Escape') keepEditing()
+          }}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) keepEditing()
+          }}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 4,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 12,
+            background: uiTokens.surface,
+            backdropFilter: 'blur(3px)',
+            WebkitBackdropFilter: 'blur(3px)',
+          }}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 280,
+              padding: '12px 14px',
+              border: `1px solid ${uiTokens.border}`,
+              borderRadius: uiSizes.radius,
+              background: uiTokens.field,
+              color: uiTokens.text,
+              fontSize: 12,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: uiTokens.textSecondary }}>
+              <NotebookGlyph size={14} />
+              <span style={{ fontWeight: 600 }}>{t('discardTitle')}</span>
+            </div>
+            <p style={{ margin: '8px 0 12px', color: uiTokens.text, overflowWrap: 'anywhere' }}>
+              {t('discardConfirm')}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                type="button"
+                data-testid="notebook-confirm-discard-cancel"
+                autoFocus
+                onClick={keepEditing}
+                style={rowButtonStyle}
+              >
+                {t('discardKeep')}
+              </button>
+              <button
+                type="button"
+                data-testid="notebook-confirm-discard-ok"
+                onClick={discardDraft}
+                style={{
+                  ...rowButtonStyle,
+                  borderColor: uiTokens.danger,
+                  color: uiTokens.textInverted,
+                  background: uiTokens.danger,
+                  fontWeight: 600,
+                }}
+              >
+                {t('discardLeave')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

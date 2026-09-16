@@ -39,6 +39,18 @@ export interface NotebookPrefs {
    * on its own. Other tiers have their own panel lifetime (`openOnStart`).
    */
   autoOpenOnNewSession: boolean
+  /**
+   * Select-to-notebook (v0.2.0): selecting text in the session shows a small
+   * floating "save to notebook" action; the selection becomes a fresh note
+   * titled {@link DEFAULT_SELECTION_TITLE_PREFIX}`n`. On by default.
+   */
+  selectionToNotebook: boolean
+  /**
+   * Answer-to-notebook (v0.2.0): every finalized assistant message carries a
+   * "save to notebook" action at the end of its action row; the whole answer
+   * becomes a fresh note titled with the session's title. On by default.
+   */
+  messageToNotebook: boolean
 }
 
 /** Default preferences, mirrored by the host schema and the client settings panel. */
@@ -49,6 +61,45 @@ export const DEFAULT_PREFS: NotebookPrefs = {
   confirmDelete: true,
   openOnStart: false,
   autoOpenOnNewSession: false,
+  selectionToNotebook: true,
+  messageToNotebook: true,
+}
+
+/**
+ * Title stem of a note minted from captured content (v0.2.0): the numbered
+ * default `未命名1`, `未命名2`, … handed to a note the user did not name.
+ *
+ * The two capture features use the SAME stem on purpose — the user sees one
+ * family of auto-created entries, and {@link nextUntitledTitle} numbers them
+ * against whatever the notebook already holds.
+ */
+export const UNTITLED_TITLE_STEM = '未命名'
+
+/** Matches a default title produced by {@link nextUntitledTitle}. */
+export const UNTITLED_TITLE_RE: RegExp = /^未命名(\d+)$/
+
+/**
+ * The next free default title for a captured note: `未命名n` with the smallest
+ * `n ≥ 1` no existing title already uses.
+ *
+ * "Smallest free" rather than "count + 1" so deleting `未命名2` hands the next
+ * capture that slot instead of skipping to `未命名4`, and a non-numeric or
+ * renamed title can never collide with a generated one. `used` is scanned as
+ * plain strings — titles are compared exactly, not trimmed, because the host
+ * stores what the user typed.
+ */
+export function nextUntitledTitle(existingTitles: readonly string[]): string {
+  const used = new Set<number>()
+  for (const title of existingTitles) {
+    if (typeof title !== 'string') continue
+    const match = UNTITLED_TITLE_RE.exec(title)
+    if (match === null) continue
+    const value = Number.parseInt(match[1] ?? '', 10)
+    if (Number.isFinite(value) && value > 0) used.add(value)
+  }
+  let index = 1
+  while (used.has(index)) index += 1
+  return `${UNTITLED_TITLE_STEM}${index}`
 }
 
 /** Hard cap for one uploaded image (bytes). Enforced on both halves. */

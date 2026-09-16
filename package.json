@@ -1,7 +1,7 @@
 {
   "name": "dsh-notebook",
-  "version": "0.1.0",
-  "description": "DSH sidebar notebook: notes with a title and a body, image attachments (videos rejected), one-shot clipboard copy of the body, and a single reusable editor dialog.",
+  "version": "0.2.2",
+  "description": "DSH sidebar notebook: notes with a title and a body, image attachments (videos rejected), clipboard copy, @ references, and a single reusable editor dialog; since 0.2.0 the conversation can fill it too — select text for a floating \"to notebook\" action, or save a whole answer under the session's title; since 0.2.1 the body box is content-sized — it grows and shrinks with the note; 0.2.2 replaces the native confirm prompts with in-panel dialogs (no renderer-blocking modal) and makes every string follow the shell's language.",
   "type": "module",
   "license": "MIT",
   "repository": {

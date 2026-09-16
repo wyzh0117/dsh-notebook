@@ -95,7 +95,7 @@ export interface SidebarRightLike {
 
 /** The cell kind of each slot this plugin contributes to, as the shell declares it. */
 export type KeyedSlotName = 'sidebar.right.pane.tab'
-export type ListSlotName = 'shell.overlay' | 'settings.section'
+export type ListSlotName = 'shell.overlay' | 'settings.section' | 'conversation.chat.assistant-actions'
 
 /**
  * Registration options accepted by `ctx.slots.register` (the subset in use).

@@ -1,8 +1,8 @@
 {
   "id": "dsh-notebook",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "main": "./lib/index.js",
-  "description": "DSH sidebar notebook: notes with title and body, image attachments, clipboard copy, and one reusable editor dialog.",
+  "description": "DSH sidebar notebook: notes with title and body, image attachments, clipboard copy, @ references, one reusable editor dialog, (0.2.0) capture from the conversation — selected text or a whole answer — and (0.2.1) a body box that sizes itself to its content. 0.2.2 drops the native confirm prompts (in-panel dialogs instead) and localizes every string to the shell language.",
   "engines": { "dsh": ">=0.1.1-rc.2" },
   "contributes": { "tools": [], "skills": [] },
   "client": { "main": "./lib/client.js" }

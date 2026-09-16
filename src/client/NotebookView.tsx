@@ -7,6 +7,10 @@
  * overlay inside the panel. Editing never opens a second container, a second
  * layer, or a new tab.
  *
+ * The delete prompt (v0.2.2) is the panel's second overlay and obeys the same
+ * rule: `confirmDelete` raises an in-view dialog — never `window.confirm`,
+ * whose renderer-blocking modal can freeze the whole page in an embedded host.
+ *
  * While `visible === false` the component neither loads nor polls — the sidebar
  * tiers keep it mounted and hidden, and a hidden panel must not hit the host.
  *
@@ -72,15 +76,9 @@ function formatTime(timestamp: number): string {
   }
 }
 
-/** `window.confirm`, but never a trap: locked-down embeds answer "yes". */
-function askConfirm(question: string): boolean {
-  const confirmFn = typeof window !== 'undefined' ? window.confirm : undefined
-  if (typeof confirmFn !== 'function') return true
-  try {
-    return confirmFn.call(window, question) !== false
-  } catch {
-    return true
-  }
+/** The user-facing name of a note: its title, or the untitled placeholder. */
+function displayTitle(note: NotebookNote): string {
+  return note.title && note.title.length > 0 ? note.title : t('untitled')
 }
 
 export function NotebookView(props: NotebookViewProps): JSX.Element {
@@ -96,9 +94,27 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
   const [editorState, setEditorState] = useState<EditorState>({ kind: 'closed' })
   const [toast, setToast] = useState<string | null>(null)
   const [workingId, setWorkingId] = useState<string | null>(null)
+  /**
+   * The note whose deletion is waiting for the user's answer.
+   *
+   * `confirmDelete` is answered by the panel's OWN dialog, never by
+   * `window.confirm`: a native modal blocks the renderer thread, and in the
+   * embedded/composition hosts DSH runs in (webviews, sandboxed frames) the
+   * dialog can be swallowed while the block stays — the page simply freezes on
+   * a Delete click. An in-view dialog cannot block anything, is testable, and
+   * matches the editor overlay the same panel already draws.
+   */
+  const [confirming, setConfirming] = useState<NotebookNote | null>(null)
 
   const alive = useRef(true)
   const toastTimer = useRef<number | null>(null)
+  /**
+   * The note id currently being deleted, so a double click on the dialog's
+   * confirm button (two click events before React re-renders) cannot fire two
+   * DELETE requests — the second would 404 and paint an error banner over a
+   * deletion that actually succeeded.
+   */
+  const deleting = useRef<string | null>(null)
 
   useEffect(
     () => () => {
@@ -138,7 +154,9 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
     void load()
   }, [shown, load])
 
-  // Poll only while the panel is open AND no editor is capturing the screen.
+  // Poll only while the panel is open AND no EDITOR is capturing the screen; a
+  // pending delete confirmation keeps polling on purpose, so a note deleted in
+  // another browser takes its own question away (see the effect below).
   useEffect(() => {
     if (!shown || editorState.kind !== 'closed') return
     const timer = window.setInterval(() => {
@@ -211,19 +229,21 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
         showToast(t('refUnavailable'))
         return
       }
-      const label = note.title && note.title.length > 0 ? note.title : t('untitled')
+      const label = displayTitle(note)
       const ok = composer.reference(note, buildBodyText(note))
       showToast(ok ? t('referenced', { title: label }) : t('refFailed'))
     },
     [composer, showToast],
   )
 
-  const handleDelete = useCallback(
+  /** The actual removal, once the decision is made (never asks anything). */
+  const performDelete = useCallback(
     async (note: NotebookNote) => {
-      if (prefs?.confirmDelete !== false) {
-        const label = note.title && note.title.length > 0 ? note.title : t('untitled')
-        if (!askConfirm(t('confirmDelete', { title: label }))) return
-      }
+      // One request per note: the guard lives in a ref because two clicks in
+      // the same tick both read the pre-update state.
+      if (deleting.current === note.id) return
+      deleting.current = note.id
+      setConfirming(null)
       setWorkingId(note.id)
       try {
         await api.deleteNote(note.id)
@@ -231,11 +251,36 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
       } catch (caught) {
         setError(t('errDelete', { message: apiErrorMessage(caught) }))
       } finally {
+        deleting.current = null
         if (alive.current) setWorkingId(null)
       }
     },
-    [api, load, prefs?.confirmDelete],
+    [api, load],
   )
+
+  /**
+   * The row's Delete action: raise the in-panel dialog when `confirmDelete` is
+   * on, and remove the note straight away when the user turned the prompt off.
+   *
+   * A request is refused while the editor is open: the editor overlay is
+   * keyboard-reachable-around (nothing traps focus), and a confirmation raised
+   * BEHIND that overlay would be invisible while it paused the list.
+   */
+  const handleDelete = useCallback(
+    (note: NotebookNote) => {
+      if (editorState.kind !== 'closed') return
+      if (prefs?.confirmDelete === false) {
+        void performDelete(note)
+        return
+      }
+      setConfirming(note)
+    },
+    [editorState.kind, performDelete, prefs?.confirmDelete],
+  )
+
+  const cancelDelete = useCallback(() => {
+    setConfirming(null)
+  }, [])
 
   // An edit target that vanished (deleted elsewhere) closes the container.
   const editingNote =
@@ -243,6 +288,14 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
   useEffect(() => {
     if (editorState.kind === 'edit' && editingNote === null && loaded) setEditorState({ kind: 'closed' })
   }, [editorState.kind, editingNote, loaded])
+
+  // A delete target that vanished (removed in another browser) closes its
+  // dialog too: asking about a row that is already gone would 404 on confirm.
+  useEffect(() => {
+    if (confirming !== null && loaded && !notes.some((note) => note.id === confirming.id)) setConfirming(null)
+  }, [confirming, notes, loaded])
+
+  const confirmLabel = confirming === null ? '' : displayTitle(confirming)
 
   const editorMode: NotebookEditorMode | null =
     editorState.kind === 'create'
@@ -469,7 +522,7 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
                         overflowWrap: 'anywhere',
                       }}
                     >
-                      {note.title && note.title.length > 0 ? note.title : t('untitled')}
+                      {displayTitle(note)}
                     </button>
                     {composer ? (
                       <button
@@ -496,7 +549,7 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
                     <button
                       type="button"
                       data-testid="notebook-note-delete"
-                      onClick={() => void handleDelete(note)}
+                      onClick={() => handleDelete(note)}
                       style={actionButton}
                     >
                       <TrashIcon size={11} />
@@ -536,6 +589,91 @@ export function NotebookView(props: NotebookViewProps): JSX.Element {
           }}
         >
           {toast}
+        </div>
+      ) : null}
+
+      {/*
+        The confirmDelete prompt: an overlay INSIDE the panel, deliberately not
+        `window.confirm` (see the `confirming` state above). Escape and a click
+        on the backdrop both answer "no"; the destructive button is never the
+        focused one, so a stray Enter cannot delete a note.
+      */}
+      {confirming !== null ? (
+        <div
+          data-testid="notebook-confirm-delete"
+          role="alertdialog"
+          aria-modal="true"
+          aria-label={t('confirmDeleteTitle')}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.stopPropagation()
+              cancelDelete()
+            }
+          }}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) cancelDelete()
+          }}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 2,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 12,
+            background: uiTokens.surface,
+            backdropFilter: 'blur(3px)',
+            WebkitBackdropFilter: 'blur(3px)',
+          }}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 280,
+              padding: '12px 14px',
+              border: `1px solid ${uiTokens.border}`,
+              borderRadius: uiSizes.radius,
+              background: uiTokens.field,
+              color: uiTokens.text,
+              fontSize: 12,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: uiTokens.textSecondary }}>
+              <NotebookGlyph size={14} />
+              <span style={{ fontWeight: 600 }}>{t('confirmDeleteTitle')}</span>
+            </div>
+            <p
+              data-testid="notebook-confirm-delete-message"
+              style={{ margin: '8px 0 12px', color: uiTokens.text, overflowWrap: 'anywhere' }}
+            >
+              {t('confirmDelete', { title: confirmLabel })}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                type="button"
+                data-testid="notebook-confirm-delete-cancel"
+                autoFocus
+                onClick={cancelDelete}
+                style={ghostButton}
+              >
+                {t('cancel')}
+              </button>
+              <button
+                type="button"
+                data-testid="notebook-confirm-delete-ok"
+                onClick={() => void performDelete(confirming)}
+                style={{
+                  ...ghostButton,
+                  borderColor: uiTokens.danger,
+                  color: uiTokens.textInverted,
+                  background: uiTokens.danger,
+                  fontWeight: 600,
+                }}
+              >
+                {t('delete')}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 

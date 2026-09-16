@@ -385,7 +385,70 @@ describe('NotebookView', () => {
     expect(screen.queryAllByTestId('notebook-editor').length).toBe(0)
     expect(screen.getByTestId('notebook-empty')).toBeTruthy()
   })
-  it('asks before deleting when confirmDelete is on, then removes the row', async () => {
+
+  /**
+   * v0.2.2: the unsaved-draft prompt is the editor's own dialog too. It used to
+   * be `window.confirm`, which blocks the renderer thread — the same freeze the
+   * delete prompt had. The spy pins the regression down.
+   */
+  it('asks in its own dialog before discarding a draft, and never through window.confirm', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const { api } = renderView()
+    await screen.findByTestId('notebook-empty')
+
+    fireEvent.click(screen.getByTestId('notebook-new'))
+    fireEvent.change(await screen.findByTestId('notebook-title'), { target: { value: '未保存的记事' } })
+    fireEvent.click(screen.getByTestId('notebook-cancel'))
+
+    const dialog = await screen.findByTestId('notebook-confirm-discard')
+    expect(dialog.getAttribute('role')).toBe('alertdialog')
+    expect(screen.getByText(t('discardConfirm'))).toBeTruthy()
+    // The editor is still up and nothing was saved while the question is open.
+    expect(screen.getByTestId('notebook-editor')).toBeTruthy()
+    expect(api.calls).not.toContain('createNote')
+
+    fireEvent.click(screen.getByTestId('notebook-confirm-discard-ok'))
+    await waitFor(() => expect(screen.queryByTestId('notebook-editor')).toBeNull())
+    expect(api.state.notes.length).toBe(0)
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
+  it('keeps the draft when the discard question is answered "keep editing"', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const { api } = renderView()
+    await screen.findByTestId('notebook-empty')
+
+    fireEvent.click(screen.getByTestId('notebook-new'))
+    const title = await screen.findByTestId('notebook-title')
+    fireEvent.change(title, { target: { value: '还要继续写' } })
+
+    // The safe button.
+    fireEvent.click(screen.getByTestId('notebook-cancel'))
+    fireEvent.click(await screen.findByTestId('notebook-confirm-discard-cancel'))
+    await waitFor(() => expect(screen.queryByTestId('notebook-confirm-discard')).toBeNull())
+    expect(screen.getByTestId('notebook-editor')).toBeTruthy()
+    expect((screen.getByTestId('notebook-title') as HTMLInputElement).value).toBe('还要继续写')
+    // The keyboard goes back to the body box: without that, the editor's Esc /
+    // Cmd+Enter shortcuts would be dead until the user clicked back in.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId('notebook-body')))
+
+    // Escape closes the question (it does not re-ask, and does not leave).
+    fireEvent.keyDown(screen.getByTestId('notebook-editor'), { key: 'Escape' })
+    fireEvent.keyDown(await screen.findByTestId('notebook-confirm-discard'), { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByTestId('notebook-confirm-discard')).toBeNull())
+    expect(screen.getByTestId('notebook-editor')).toBeTruthy()
+    expect((screen.getByTestId('notebook-title') as HTMLInputElement).value).toBe('还要继续写')
+
+    expect(api.calls).not.toContain('createNote')
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+  /**
+   * v0.2.2: the confirmDelete prompt is the panel's OWN dialog. Before that it
+   * was `window.confirm`, whose modal blocks the renderer thread — in an
+   * embedded host that never draws the dialog the page simply froze on a Delete
+   * click. The spy below pins the regression down: a delete must never call it.
+   */
+  it('asks in its own dialog before deleting, and never through window.confirm', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const api = createFakeApi({ notes: [seedNote()] })
     renderView({ api })
@@ -393,39 +456,138 @@ describe('NotebookView', () => {
     await screen.findByRole('button', { name: '待删除' })
     fireEvent.click(screen.getByTestId('notebook-note-delete'))
 
-    await waitFor(() => expect(api.calls).toContain('deleteNote'))
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
-    expect(confirmSpy.mock.calls[0][0]).toContain('待删除')
-    await waitFor(() => expect(screen.queryByTestId('notebook-note')).toBeNull())
-    expect(api.state.notes.length).toBe(0)
-    expect(await screen.findByTestId('notebook-empty')).toBeTruthy()
-  })
+    const dialog = await screen.findByTestId('notebook-confirm-delete')
+    expect(dialog.getAttribute('role')).toBe('alertdialog')
+    expect(screen.getByTestId('notebook-confirm-delete-message').textContent).toContain('待删除')
 
-  it('deletes without asking when confirmDelete is off, and keeps the note when refused', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
-    const api = createFakeApi({ notes: [seedNote()], prefs: { confirmDelete: true } })
-    renderView({ api })
-
-    await screen.findByRole('button', { name: '待删除' })
-    // Refused confirmation: nothing is deleted, nothing is fetched.
-    fireEvent.click(screen.getByTestId('notebook-note-delete'))
-    await waitFor(() => expect(confirmSpy).toHaveBeenCalledTimes(1))
+    // Nothing is removed and nothing is fetched until the user answers.
     expect(api.calls).not.toContain('deleteNote')
     expect(api.state.notes.length).toBe(1)
 
-    // With the preference off there is no prompt at all (fresh render).
-    cleanup()
-    const quietApi = createFakeApi({ notes: [seedNote()] })
-    renderView({ api: quietApi, prefs: { confirmDelete: false } })
+    fireEvent.click(screen.getByTestId('notebook-confirm-delete-ok'))
+    await waitFor(() => expect(api.calls).toContain('deleteNote'))
+    await waitFor(() => expect(screen.queryByTestId('notebook-note')).toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('notebook-confirm-delete')).toBeNull())
+    expect(api.state.notes.length).toBe(0)
+    expect(await screen.findByTestId('notebook-empty')).toBeTruthy()
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
+  it('keeps the note when the prompt is answered "no" (button, Escape, backdrop)', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const api = createFakeApi({ notes: [seedNote()] })
+    renderView({ api })
+
+    await screen.findByRole('button', { name: '待删除' })
+
+    // The Cancel button.
+    fireEvent.click(screen.getByTestId('notebook-note-delete'))
+    fireEvent.click(await screen.findByTestId('notebook-confirm-delete-cancel'))
+    await waitFor(() => expect(screen.queryByTestId('notebook-confirm-delete')).toBeNull())
+
+    // Escape.
+    fireEvent.click(screen.getByTestId('notebook-note-delete'))
+    fireEvent.keyDown(await screen.findByTestId('notebook-confirm-delete'), { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByTestId('notebook-confirm-delete')).toBeNull())
+
+    // A press on the backdrop itself (not on the card inside it).
+    fireEvent.click(screen.getByTestId('notebook-note-delete'))
+    fireEvent.mouseDown(await screen.findByTestId('notebook-confirm-delete'))
+    await waitFor(() => expect(screen.queryByTestId('notebook-confirm-delete')).toBeNull())
+
+    expect(api.calls).not.toContain('deleteNote')
+    expect(api.state.notes.length).toBe(1)
+    expect(confirmSpy).not.toHaveBeenCalled()
+  })
+
+  it('deletes at once when confirmDelete is off', async () => {
+    const api = createFakeApi({ notes: [seedNote()] })
+    renderView({ api, prefs: { confirmDelete: false } })
+
     await screen.findByRole('button', { name: '待删除' })
     fireEvent.click(screen.getByTestId('notebook-note-delete'))
-    await waitFor(() => expect(quietApi.calls).toContain('deleteNote'))
-    expect(confirmSpy).toHaveBeenCalledTimes(1)
+
+    await waitFor(() => expect(api.calls).toContain('deleteNote'))
+    expect(screen.queryByTestId('notebook-confirm-delete')).toBeNull()
+    await waitFor(() => expect(api.state.notes.length).toBe(0))
+  })
+
+  it('closes the prompt when the note disappears elsewhere', async () => {
+    const api = createFakeApi({ notes: [seedNote()] })
+    const { view } = renderView({ api })
+
+    await screen.findByRole('button', { name: '待删除' })
+    fireEvent.click(screen.getByTestId('notebook-note-delete'))
+    await screen.findByTestId('notebook-confirm-delete')
+
+    // Another browser removed it: the next read must take the question away
+    // instead of leaving a dialog whose confirmation would 404.
+    api.state.notes = []
+    view.rerender(
+      <NotebookView api={api} prefs={{ ...DEFAULT_PREFS }} onPrefsChange={vi.fn()} visible={false} />,
+    )
+    view.rerender(<NotebookView api={api} prefs={{ ...DEFAULT_PREFS }} onPrefsChange={vi.fn()} visible />)
+
+    await waitFor(() => expect(screen.queryByTestId('notebook-confirm-delete')).toBeNull())
+    expect(api.calls).not.toContain('deleteNote')
+  })
+
+  it('reports a failed delete in the panel and keeps the row', async () => {
+    const base = createFakeApi({ notes: [seedNote()] })
+    const api: FakeApi = {
+      ...base,
+      async deleteNote() {
+        base.calls.push('deleteNote')
+        throw new Error('disk on fire')
+      },
+    }
+    renderView({ api })
+
+    await screen.findByRole('button', { name: '待删除' })
+    fireEvent.click(screen.getByTestId('notebook-note-delete'))
+    fireEvent.click(await screen.findByTestId('notebook-confirm-delete-ok'))
+
+    await waitFor(() => expect(base.calls).toContain('deleteNote'))
+    // The failure is reported, the row survives, and the dialog is gone (a
+    // second attempt starts from the row).
+    await screen.findByText(t('errDelete', { message: 'disk on fire' }))
+    expect(screen.getByTestId('notebook-note')).toBeTruthy()
+    expect(screen.queryByTestId('notebook-confirm-delete')).toBeNull()
+  })
+
+  it('fires one DELETE when Delete is clicked twice in the same tick', async () => {
+    const base = createFakeApi({ notes: [seedNote()] })
+    let release: () => void = () => {}
+    const api: FakeApi = {
+      ...base,
+      deleteNote(id: string) {
+        base.calls.push('deleteNote')
+        return new Promise<void>((resolve) => {
+          release = () => {
+            base.state.notes = base.state.notes.filter((note) => note.id !== id)
+            resolve()
+          }
+        })
+      },
+    }
+    // No prompt: the row (and its button) stay mounted while the request is in
+    // flight, so the second click of an impatient double click really does
+    // reach the handler — unlike the dialog path, whose first click unmounts
+    // the button.
+    renderView({ api, prefs: { confirmDelete: false } })
+
+    const button = await screen.findByTestId('notebook-note-delete')
+    fireEvent.click(button)
+    fireEvent.click(button)
+
+    expect(base.calls.filter((call) => call === 'deleteNote')).toHaveLength(1)
+    release()
+    await waitFor(() => expect(base.state.notes.length).toBe(0))
   })
 })
 
 describe('NotebookSettingsPanel', () => {
-  it('reports every preference as a patch (all five fields, spec §5)', () => {
+  it('reports every preference as a patch, and no key is missing (spec §5)', () => {
     const onChange = vi.fn()
     render(<NotebookSettingsPanel prefs={{ ...DEFAULT_PREFS }} onChange={onChange} />)
 
@@ -444,6 +606,24 @@ describe('NotebookSettingsPanel', () => {
     fireEvent.click(screen.getByTestId('notebook-setting-openOnStart'))
     expect(onChange).toHaveBeenCalledWith({ openOnStart: true })
 
-    expect(onChange).toHaveBeenCalledTimes(5)
+    fireEvent.click(screen.getByTestId('notebook-setting-autoOpenOnNewSession'))
+    expect(onChange).toHaveBeenCalledWith({ autoOpenOnNewSession: true })
+
+    // v0.2.0's two capture switches: both default ON, so the first click is an
+    // opt-OUT — the panel must render them checked from `DEFAULT_PREFS`.
+    const selection = screen.getByTestId('notebook-setting-selectionToNotebook') as HTMLInputElement
+    const answer = screen.getByTestId('notebook-setting-messageToNotebook') as HTMLInputElement
+    expect(selection.checked).toBe(true)
+    expect(answer.checked).toBe(true)
+
+    fireEvent.click(selection)
+    expect(onChange).toHaveBeenCalledWith({ selectionToNotebook: false })
+
+    fireEvent.click(answer)
+    expect(onChange).toHaveBeenCalledWith({ messageToNotebook: false })
+
+    // One patch per preference in `DEFAULT_PREFS`: a preference with no control
+    // is invisible to the user, so the count is the drift guard.
+    expect(onChange).toHaveBeenCalledTimes(Object.keys(DEFAULT_PREFS).length)
   })
 })

@@ -27,9 +27,11 @@ export const SERVICE_TAB_ID = 'dsh-notebook:notebook'
 export const SERVICE_TAB_ORDER = 60
 
 /**
- * The four preferences exposed as declarative rows (spec §5). They are declared
- * so the sidebar's settings page can inventory them; the actual read/write path
- * is `settings.render` → `<NotebookSettingsPanel>` → `runtime.setPrefs`, because
+ * The preferences exposed as declarative rows (spec §5): every one EXCEPT
+ * `openOnStart`, which only means something in the standalone tier — the one
+ * tier that does not go through this declaration. They are declared so the
+ * sidebar's settings page can inventory them; the actual read/write path is
+ * `settings.render` → `<NotebookSettingsPanel>` → `runtime.setPrefs`, because
  * the sidebar's own `pluginToggles` store would fork the truth away from
  * `NotebookDoc.prefs`.
  */
@@ -70,6 +72,21 @@ export function buildPluginToggles(): ReadonlyArray<Record<string, unknown>> {
       key: 'autoOpenOnNewSession',
       title: () => t('settingsAutoOpen'),
       desc: () => t('settingsAutoOpenDesc'),
+      type: 'switch',
+    },
+    // v0.2.0's two capture switches. `openOnStart` remains the one preference
+    // this inventory omits: it only means something in the standalone tier,
+    // which is the tier that does NOT go through this sidebar declaration.
+    {
+      key: 'selectionToNotebook',
+      title: () => t('settingsSelectionToNotebook'),
+      desc: () => t('settingsSelectionToNotebookDesc'),
+      type: 'switch',
+    },
+    {
+      key: 'messageToNotebook',
+      title: () => t('settingsMessageToNotebook'),
+      desc: () => t('settingsMessageToNotebookDesc'),
       type: 'switch',
     },
   ]

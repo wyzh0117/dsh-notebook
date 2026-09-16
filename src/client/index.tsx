@@ -17,6 +17,9 @@ import { attachLocale } from './locales'
 import { createNotebookApi, type NotebookApiClient } from './api'
 import { createNotebookComposer } from './composer'
 import { createNoteCatalog, registerNoteReferenceSource } from './reference'
+import { createNotebookCapture } from './capture'
+import { createSelectionTracker } from './selectionAction'
+import { registerCaptureSlots } from './captureSlots'
 import { DEFAULT_PREFS, type NotebookPrefs } from '../shared/types'
 import {
   createTierController,
@@ -81,6 +84,8 @@ export function mergePrefs(base: NotebookPrefs, patch: Partial<NotebookPrefs>): 
   if (patch.confirmDelete !== undefined) next.confirmDelete = patch.confirmDelete === true
   if (patch.openOnStart !== undefined) next.openOnStart = patch.openOnStart === true
   if (patch.autoOpenOnNewSession !== undefined) next.autoOpenOnNewSession = patch.autoOpenOnNewSession === true
+  if (patch.selectionToNotebook !== undefined) next.selectionToNotebook = patch.selectionToNotebook === true
+  if (patch.messageToNotebook !== undefined) next.messageToNotebook = patch.messageToNotebook === true
   return next
 }
 
@@ -182,6 +187,38 @@ function activate(ctx: ClientContext, record: Activation, options?: { api?: Note
     ctx.effect(() => registerNoteReferenceSource(ctx, catalog), 'dsh-notebook:@ reference source')
   } catch (error) {
     console.warn('[dsh-notebook] reference source registration failed:', error)
+  }
+
+  // ── the capture features: select-to-notebook + answer-to-notebook ────────
+  // Both write through ONE capture service (so title numbering and toasts are
+  // shared) and are tier-independent: they live in shell slots, not in a
+  // sidebar carrier. The selection tracker owns the document listeners, so it
+  // is created and disposed with the activation — never at module scope.
+  //
+  // The order here is deliberate: the surfaces are registered FIRST and the
+  // resulting disposer is handed to `ctx.effect` afterwards. Registering inside
+  // the effect (the `@` source's shape) would need the tracker to be built in
+  // there too, and a `ctx.effect` that fails *after* running its callback would
+  // then leave live slot entries and document listeners with no unload path.
+  const capture = createNotebookCapture({ api })
+  const tracker = createSelectionTracker()
+  const releaseCapture = registerCaptureSlots(ctx, { capture, tracker, runtime })
+  try {
+    ctx.effect(
+      () => () => {
+        releaseCapture()
+        tracker.dispose()
+        capture.dispose()
+      },
+      'dsh-notebook:capture surfaces',
+    )
+  } catch (error) {
+    // No fiber to own them: release everything rather than leak listeners and
+    // timers that survive an unload.
+    console.warn('[dsh-notebook] capture surface effect registration failed:', error)
+    releaseCapture()
+    tracker.dispose()
+    capture.dispose()
   }
 
   // ── three-tier registration ──────────────────────────────────────────────

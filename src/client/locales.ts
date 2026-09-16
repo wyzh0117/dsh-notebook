@@ -5,17 +5,39 @@
  * `t()` falls back to the key itself so a missing entry is a cosmetic bug, not
  * a crash, and supports `{name}` interpolation.
  *
- * Language comes from the DSH locale service handed to {@link attachLocale};
- * unknown or missing means `zh` (the plugin's primary locale).
+ * Language comes from the DSH locale service handed to {@link attachLocale}:
+ * the ACTIVE locale id is read through `getLocale()` / `getSnapshot()` (that is
+ * what `LocaleRuntime` publishes) so the plugin follows the shell's language;
+ * a composition with no readable locale keeps `zh`, the plugin's primary locale.
+ * `navigator.language` is deliberately never consulted — the shell owns the
+ * language, and the shell is what the user is reading.
  *
  * Purity: no `node:*`, no `@deepseek-ai/*` value imports (spec §00-context).
  */
 
 export const LOCALE_NS = 'dsh-notebook'
 
-/** Structural view of `ctx.locale` — we only need these two members. */
+/** The locale snapshot DSH publishes (`LocaleRuntime.getLocale()` / `getSnapshot()`). */
+export interface LocaleSnapshotLike {
+  /** Active locale id, e.g. `en`, `en-US`, `zh`, `zh-Hans`. */
+  active?: unknown
+}
+
+/**
+ * Structural view of `ctx.locale` — the members this plugin reads or calls.
+ *
+ * `register` is the write seam; the three readers are the READ seam, and the
+ * order they are tried in matters: DSH's `LocaleRuntime` exposes
+ * `getLocale()` and `getSnapshot()` (both returning `{ active }`) and does NOT
+ * expose a plain `get()`. Reading only the latter — as v0.2.1 and earlier did —
+ * left the plugin permanently on its `zh` fallback, so an English shell rendered
+ * Chinese tooltips. `get` stays declared for older/other compositions that do
+ * expose a bare language string.
+ */
 export interface LocaleLike {
   register(ns: string, lang: string, dict: Record<string, string>): () => void
+  getLocale?: () => LocaleSnapshotLike
+  getSnapshot?: () => LocaleSnapshotLike
   get?: () => string
 }
 
@@ -37,6 +59,7 @@ export const zh: Record<string, string> = {
   close: '关闭',
   expand: '展开记事本',
   collapse: '收起记事本',
+  resize: '调整记事本宽度',
 
   // ── editor ──────────────────────────────────────────────────────────────
   editorCreate: '新建记事',
@@ -66,6 +89,17 @@ export const zh: Record<string, string> = {
   copyHint: '点击标题复制正文',
   emptyBody: '（无正文）',
 
+  // ── capture (v0.2.0: selection → notebook, answer → notebook) ───────────
+  selectionAction: '进记事本',
+  selectionHint: '把选中的内容存成一条新记事',
+  selectionSaved: '已存入记事本「{title}」',
+  selectionEmpty: '没有可保存的选中内容',
+  answerAction: '存入记事本',
+  answerHint: '把这条回复存成一条记事',
+  answerSaved: '已存入记事本「{title}」',
+  answerEmpty: '这条回复没有可保存的正文',
+  captureFailed: '存入记事本失败：{message}',
+
   // ── toasts ──────────────────────────────────────────────────────────────
   copied: '已复制正文（{n} 字）',
   copyEmpty: '正文为空',
@@ -82,7 +116,11 @@ export const zh: Record<string, string> = {
   errUpload: '有 {n} 张图片上传失败，条目已保留，可重试',
   degraded: '磁盘不可写，笔记暂存在内存中（重启会丢失）',
   confirmDelete: '确定删除「{title}」？',
+  confirmDeleteTitle: '删除记事',
+  discardTitle: '未保存的改动',
   discardConfirm: '放弃未保存的改动？',
+  discardKeep: '继续编辑',
+  discardLeave: '放弃',
 
   // ── relative time ───────────────────────────────────────────────────────
   timeJustNow: '刚刚',
@@ -107,6 +145,10 @@ export const zh: Record<string, string> = {
   settingsOpenOnStartDesc: '仅在没有其它侧边栏产品的独立模式下生效',
   settingsAutoOpen: '新会话自动打开记事本',
   settingsAutoOpenDesc: '每进入一个新会话时自动打开记事本（原生侧栏会展开面板；默认关闭）',
+  settingsSelectionToNotebook: '选中文字可存入记事本',
+  settingsSelectionToNotebookDesc: '在会话里选中文字后，选区旁浮现「进记事本」按钮，点击即新建一条记事',
+  settingsMessageToNotebook: '回复下方显示「存入记事本」',
+  settingsMessageToNotebookDesc: '每条回复的操作栏末尾增加一个记事本图标，点击即把整条回复存为新记事',
 
   // Aliases: the declarative settings rows of the service tier address the same
   // four preferences by their bare field names.
@@ -116,6 +158,8 @@ export const zh: Record<string, string> = {
   confirmDeleteLabel: '删除前确认',
   openOnStart: '启动即展开侧边栏',
   autoOpenOnNewSession: '新会话自动打开记事本',
+  selectionToNotebook: '选中文字可存入记事本',
+  messageToNotebook: '回复下方显示「存入记事本」',
 }
 
 export const en: Record<string, string> = {
@@ -132,6 +176,7 @@ export const en: Record<string, string> = {
   close: 'Close',
   expand: 'Show notebook',
   collapse: 'Hide notebook',
+  resize: 'Resize the notebook panel',
 
   editorCreate: 'New note',
   editorEdit: 'Edit note',
@@ -160,6 +205,16 @@ export const en: Record<string, string> = {
   copyHint: 'Click the title to copy the body',
   emptyBody: '(empty body)',
 
+  selectionAction: 'To notebook',
+  selectionHint: 'Save the selected text as a new note',
+  selectionSaved: 'Saved to the notebook as “{title}”',
+  selectionEmpty: 'Nothing selected to save',
+  answerAction: 'Save to notebook',
+  answerHint: 'Save this answer as a note',
+  answerSaved: 'Saved to the notebook as “{title}”',
+  answerEmpty: 'This answer has no text to save',
+  captureFailed: 'Could not save to the notebook: {message}',
+
   copied: 'Body copied ({n} characters)',
   copyEmpty: 'The body is empty',
   copyFailed: 'Copy failed — please select the text manually',
@@ -174,7 +229,11 @@ export const en: Record<string, string> = {
   errUpload: '{n} image(s) failed to upload — the note was kept, you can retry',
   degraded: 'The disk is not writable, notes live in memory only (lost on restart)',
   confirmDelete: 'Delete “{title}”?',
+  confirmDeleteTitle: 'Delete note',
+  discardTitle: 'Unsaved changes',
   discardConfirm: 'Discard unsaved changes?',
+  discardKeep: 'Keep editing',
+  discardLeave: 'Discard',
 
   timeJustNow: 'just now',
   timeMinutesAgo: '{n} min ago',
@@ -197,6 +256,10 @@ export const en: Record<string, string> = {
   settingsOpenOnStartDesc: 'Only used by the standalone tier (no other sidebar product installed)',
   settingsAutoOpen: 'Open the notebook for new sessions',
   settingsAutoOpenDesc: 'Open the Notebook whenever a new session becomes current (the native sidebar expands its panel; off by default)',
+  settingsSelectionToNotebook: 'Save selected text to the notebook',
+  settingsSelectionToNotebookDesc: 'Selecting text in a session shows a “to notebook” button beside the selection; clicking it creates a note',
+  settingsMessageToNotebook: 'Show “save to notebook” under answers',
+  settingsMessageToNotebookDesc: 'Adds a notebook icon at the end of every answer’s action row; clicking it saves the whole answer as a new note',
 
   sortOrder: 'Sort order',
   copyImagesAsName: 'Write image names when copying',
@@ -204,6 +267,8 @@ export const en: Record<string, string> = {
   confirmDeleteLabel: 'Confirm before deleting',
   openOnStart: 'Expand the sidebar on start',
   autoOpenOnNewSession: 'Open the notebook for new sessions',
+  selectionToNotebook: 'Save selected text to the notebook',
+  messageToNotebook: 'Show “save to notebook” under answers',
 }
 
 /** The last locale service handed to {@link attachLocale} (null = default zh). */
@@ -214,8 +279,12 @@ let detach: Array<() => void> = []
  * Bind the dictionaries to the host locale service. Called once per activation
  * from `src/client/index.tsx`; re-binding disposes the previous registrations so
  * HMR / double activation cannot stack dictionaries.
+ *
+ * A missing or malformed service is accepted on purpose: the plugin keeps its
+ * own dictionaries and answers every lookup from `zh`, which is strictly better
+ * than refusing to render.
  */
-export function attachLocale(locale: LocaleLike): void {
+export function attachLocale(locale: LocaleLike | null | undefined): void {
   for (const dispose of detach) {
     try {
       dispose()
@@ -241,16 +310,42 @@ export function attachLocale(locale: LocaleLike): void {
 
 /** The language `t()` currently resolves against. */
 export function currentLang(): Lang {
-  let raw: string | undefined
-  try {
-    raw = attached?.get?.()
-  } catch {
-    raw = undefined
+  const active = readActiveLocale(attached)
+  if (active === undefined) return 'zh'
+  // Chinese in any of its tags (`zh`, `zh-CN`, `zh-Hans`, …) is this plugin's
+  // primary locale; every other registered language resolves to the shipped
+  // English dictionary — the same default DSH itself falls back to.
+  return active.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+}
+
+/**
+ * The active locale id the host service reports, or `undefined` when this
+ * composition has no readable locale.
+ *
+ * Every reader is guarded: an uncooperative service must never break the
+ * plugin, it only costs it the localized wording.
+ */
+function readActiveLocale(service: LocaleLike | null): string | undefined {
+  if (!service) return undefined
+  for (const read of [service.getLocale, service.getSnapshot]) {
+    if (typeof read !== 'function') continue
+    try {
+      const snapshot = read.call(service)
+      const active = snapshot !== null && typeof snapshot === 'object' ? snapshot.active : undefined
+      if (typeof active === 'string' && active.length > 0) return active
+    } catch {
+      // Try the next reader.
+    }
   }
-  if (typeof raw !== 'string' || raw.length === 0) return 'zh'
-  const normalized = raw.toLowerCase()
-  if (normalized.startsWith('en')) return 'en'
-  return 'zh'
+  if (typeof service.get === 'function') {
+    try {
+      const value = service.get()
+      if (typeof value === 'string' && value.length > 0) return value
+    } catch {
+      // No readable locale at all.
+    }
+  }
+  return undefined
 }
 
 /**

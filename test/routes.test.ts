@@ -422,6 +422,8 @@ describe('notebook HTTP API', () => {
       confirmDelete: false,
       openOnStart: true,
       autoOpenOnNewSession: true,
+      selectionToNotebook: false,
+      messageToNotebook: false,
     }
     expect(Object.keys(patch).sort()).toEqual(Object.keys(DEFAULT_PREFS).sort())
 

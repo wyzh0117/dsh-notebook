@@ -178,6 +178,8 @@ export function normalizePrefs(raw: unknown): NotebookPrefs {
   if (typeof raw.confirmDelete === 'boolean') prefs.confirmDelete = raw.confirmDelete
   if (typeof raw.openOnStart === 'boolean') prefs.openOnStart = raw.openOnStart
   if (typeof raw.autoOpenOnNewSession === 'boolean') prefs.autoOpenOnNewSession = raw.autoOpenOnNewSession
+  if (typeof raw.selectionToNotebook === 'boolean') prefs.selectionToNotebook = raw.selectionToNotebook
+  if (typeof raw.messageToNotebook === 'boolean') prefs.messageToNotebook = raw.messageToNotebook
   if (typeof raw.maxImagesPerNote === 'number' && Number.isFinite(raw.maxImagesPerNote)) {
     const value = Math.floor(raw.maxImagesPerNote)
     if (value >= 1 && value <= 100) prefs.maxImagesPerNote = value

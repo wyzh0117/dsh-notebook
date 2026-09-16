@@ -189,6 +189,36 @@ export function NotebookSettingsPanel(props: NotebookSettingsPanelProps): JSX.El
           />
         }
       />
+
+      <Row
+        label={t('settingsSelectionToNotebook')}
+        description={t('settingsSelectionToNotebookDesc')}
+        control={
+          <input
+            data-testid="notebook-setting-selectionToNotebook"
+            type="checkbox"
+            aria-label={t('settingsSelectionToNotebook')}
+            checked={prefs.selectionToNotebook !== false}
+            onChange={(event) => onChange({ selectionToNotebook: event.target.checked })}
+            style={styles.check}
+          />
+        }
+      />
+
+      <Row
+        label={t('settingsMessageToNotebook')}
+        description={t('settingsMessageToNotebookDesc')}
+        control={
+          <input
+            data-testid="notebook-setting-messageToNotebook"
+            type="checkbox"
+            aria-label={t('settingsMessageToNotebook')}
+            checked={prefs.messageToNotebook !== false}
+            onChange={(event) => onChange({ messageToNotebook: event.target.checked })}
+            style={styles.check}
+          />
+        }
+      />
     </div>
   )
 }
