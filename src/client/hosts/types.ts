@@ -37,6 +37,18 @@ export interface NotebookRuntime {
   composer: NotebookComposer
   /** Current preferences. Stable reference between changes (safe as a `useSyncExternalStore` snapshot). */
   getPrefs(): NotebookPrefs
+  /**
+   * Whether {@link getPrefs} has been read from the host yet (v0.2.3).
+   *
+   * The document prefs hydrate over HTTP *after* activation, so for the first
+   * moments every switch reads as its default — including
+   * `autoOpenOnNewSession`, whose default is `false`. A consumer that treats
+   * that "not yet known" as "the user said no" drops the gesture for good; the
+   * auto-open watcher asks this instead, so a session becoming current inside
+   * that window is retried rather than lost. Absent (a composition that never
+   * loads prefs) means "assume known", the pre-v0.2.3 behaviour.
+   */
+  prefsReady?(): boolean
   /** Optimistically apply a patch locally, then persist it through the host API. */
   setPrefs(patch: Partial<NotebookPrefs>): void
   /** Subscribe to preference changes; returns the unsubscribe function. */
@@ -86,11 +98,24 @@ export interface SidebarRightTabsLike {
   }): () => void
 }
 
-/** `ctx.sidebarRight` — the native right sidebar itself. */
+/**
+ * `ctx.sidebarRight` — the native right sidebar itself.
+ *
+ * Only the navigation calls are modelled, and `openTab` is the only one needed:
+ * it expands the column as part of the open ("content the user cannot see is
+ * not opened"), so an external caller never has to touch the panel state.
+ *
+ * The controller also exposes `isExpanded()` and `toggleExpanded()`, and they
+ * are deliberately NOT part of this face (v0.2.3). The pair is a trap for
+ * callers: `isExpanded()` answers from the surface the seat bound at its LAST
+ * RENDER, so it still says `false` inside the synchronous call that just opened
+ * a collapsed panel, while `toggleExpanded()` flips the LIVE state — read then
+ * flip collapses the column the open had just revealed. `ISidebarRight` has no
+ * idempotent `setExpanded`, so there is no safe correction from outside: the
+ * open is the reveal.
+ */
 export interface SidebarRightLike {
   openTab(kind: string, options?: unknown): void
-  toggleExpanded(): void
-  isExpanded(): boolean
 }
 
 /** The cell kind of each slot this plugin contributes to, as the shell declares it. */

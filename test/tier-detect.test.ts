@@ -159,13 +159,19 @@ function createFakeNativeTabs() {
 }
 
 function createFakeNativeRight() {
+  // The real controller also carries `isExpanded()` / `toggleExpanded()`, and
+  // that pair is a trap — `isExpanded()` answers from the seat's last render and
+  // is stale right after an open, while `toggleExpanded()` flips the live state
+  // (see `src/client/hosts/types.ts`). They are spied here, not modelled as
+  // behaviour, so a regression that reaches for them fails loudly instead of
+  // being swallowed by the `try`/`catch` such a call site would sit in.
   let expanded = false
   return {
     openTab: vi.fn((_kind: string, _options?: unknown): void => {}),
+    isExpanded: vi.fn((): boolean => expanded),
     toggleExpanded: vi.fn((): void => {
       expanded = !expanded
     }),
-    isExpanded: vi.fn((): boolean => expanded),
   }
 }
 
@@ -324,12 +330,14 @@ describe('three-tier sidebar detection', () => {
     expect(shellRegistrations(ctx)).toHaveLength(0)
     expect(sidebar.registerTab).not.toHaveBeenCalled()
 
-    // startup never reveals; the user-activation path does
+    // startup never reveals; the user-activation path does — and neither ever
+    // touches the panel state directly (the v0.2.2 collapse, pinned here so the
+    // `try`/`catch` in `reveal()` cannot hide it coming back)
     expect(right.openTab).not.toHaveBeenCalled()
-    expect(right.toggleExpanded).not.toHaveBeenCalled()
     expect(reveal(ctx)).toBe('native')
     expect(right.openTab).toHaveBeenCalledWith('dsh-notebook')
-    expect(right.toggleExpanded).toHaveBeenCalledTimes(1)
+    expect(right.isExpanded).not.toHaveBeenCalled()
+    expect(right.toggleExpanded).not.toHaveBeenCalled()
 
     // and the fallback timer never drew a shell
     await vi.advanceTimersByTimeAsync(2000)

@@ -219,19 +219,16 @@ export function createNativeHost(ctx: ClientContext, services: NativeHostService
     reveal(): void {
       // `sidebarRight.openTab` can throw on an unknown kind (a version skew with
       // the tab registry) — a failed reveal must never break the caller.
+      //
+      // `openTab` IS the reveal: it expands the column in the same intent as the
+      // open. Do not follow it with an `isExpanded()` read — that answers from
+      // the seat's last render and still says `false` right after a successful
+      // open, so the `toggleExpanded()` it used to trigger collapsed the panel
+      // the open had just expanded (v0.2.2; see `types.ts` for the full trap).
       try {
         right?.openTab(NATIVE_TAB_ID)
       } catch (error) {
         console.warn('[dsh-notebook] native openTab failed:', error)
-      }
-      // An open tab nobody can see is not revealed: expand the sidebar when it
-      // is collapsed.
-      try {
-        if (right !== undefined && typeof right.isExpanded === 'function' && !right.isExpanded()) {
-          right.toggleExpanded()
-        }
-      } catch (error) {
-        console.warn('[dsh-notebook] native toggleExpanded failed:', error)
       }
     },
   }

@@ -47,7 +47,7 @@ export const Config = z.object({
 })
 
 /** Used when the package manifest cannot be read. */
-const FALLBACK_VERSION = '0.2.2'
+const FALLBACK_VERSION = '0.2.3'
 
 /** Read the plugin version from the nearest manifest, falling back to a constant. */
 function resolveVersion(): string {

@@ -144,6 +144,11 @@ function activate(ctx: ClientContext, record: Activation, options?: { api?: Note
   const composer = createNotebookComposer(ctx, (noteId, relPath) => api.attachmentUrl(noteId, relPath))
   const catalog = createNoteCatalog(api)
   let prefs: NotebookPrefs = { ...DEFAULT_PREFS }
+  // Until `api.getState()` answers, every switch in `prefs` still holds its
+  // default — `autoOpenOnNewSession` included, whose default is `false`. The
+  // auto-open watcher asks this flag so that "not read yet" is not mistaken for
+  // "the user said no" (v0.2.3).
+  let prefsReady = false
   const listeners = new Set<() => void>()
   const notify = (): void => {
     for (const listener of [...listeners]) listener()
@@ -154,6 +159,7 @@ function activate(ctx: ClientContext, record: Activation, options?: { api?: Note
     composer,
     // Stable object identity between changes: safe as a useSyncExternalStore snapshot.
     getPrefs: () => prefs,
+    prefsReady: () => prefsReady,
     setPrefs(patch: Partial<NotebookPrefs>): void {
       // Optimistic local write first (the UI must never lag a click), then the
       // host document — the single source of truth across all three tiers.
@@ -275,5 +281,10 @@ function activate(ctx: ClientContext, record: Activation, options?: { api?: Note
     })
     .catch((error: unknown) => {
       console.warn('[dsh-notebook] initial state load failed; keeping defaults:', error)
+    })
+    .finally(() => {
+      // Either way the defaults are now the answer, not a placeholder: a failed
+      // read keeps them, and the watcher must stop waiting for the host.
+      prefsReady = true
     })
 }

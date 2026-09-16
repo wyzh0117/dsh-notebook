@@ -81,7 +81,7 @@ function collectNativeBody() {
 
   const host = createNativeHost(ctx, {
     tabs: { register: () => () => {} },
-    right: { openTab: () => {}, toggleExpanded: () => {}, isExpanded: () => true },
+    right: { openTab: () => {} },
   })
   host.register(runtime)
 

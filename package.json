@@ -1,7 +1,7 @@
 {
   "name": "dsh-notebook",
-  "version": "0.2.2",
-  "description": "DSH sidebar notebook: notes with a title and a body, image attachments (videos rejected), clipboard copy, @ references, and a single reusable editor dialog; since 0.2.0 the conversation can fill it too — select text for a floating \"to notebook\" action, or save a whole answer under the session's title; since 0.2.1 the body box is content-sized — it grows and shrinks with the note; 0.2.2 replaces the native confirm prompts with in-panel dialogs (no renderer-blocking modal) and makes every string follow the shell's language.",
+  "version": "0.2.3",
+  "description": "DSH sidebar notebook: notes with a title and a body, image attachments (videos rejected), clipboard copy, @ references, and a single reusable editor dialog; since 0.2.0 the conversation can fill it too — select text for a floating \"to notebook\" action, or save a whole answer under the session's title; since 0.2.1 the body box is content-sized — it grows and shrinks with the note; 0.2.2 replaces the native confirm prompts with in-panel dialogs (no renderer-blocking modal) and makes every string follow the shell's language; 0.2.3 fixes \"Open the notebook for new sessions\", which never actually opened the sidebar — the plugin's own expand call collapsed the column the open had just revealed.",
   "type": "module",
   "license": "MIT",
   "repository": {

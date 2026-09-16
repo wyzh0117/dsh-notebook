@@ -7,18 +7,23 @@
  * ever fighting the user:
  *
  * - it reacts to a session BECOMING current (a new session, or a switch to
- *   another one), never to page load — the session that is already current when
- *   the plugin activates is recorded as seen and left alone;
+ *   another one); the session that is already current when the watcher is
+ *   constructed is recorded as seen and left alone — which in practice is only
+ *   the handful of moments before the list arrives, so the selection a page load
+ *   restores is a change like any other and is opened (v0.2.3, measured);
  * - it opens once per change (a re-published snapshot of the same session is
  *   not a new session), and only while `prefs.autoOpenOnNewSession` is on (off
- *   by default, so the panel never appears uninvited);
+ *   by default, so the panel never appears uninvited) — including while that
+ *   preference is still being read from the host, where "off" means "not known
+ *   yet" rather than "no" (v0.2.3);
  * - every carrier can use it: the native right sidebar and a compatible sidebar
  *   service open their Notebook tab, while the standalone tier opens its own
  *   panel — the gesture is a callback ({@link attachSessionAutoOpen});
  * - `openTab` both opens the tab and expands the panel, but it throws while the
- *   session's sidebar surface is not mounted yet (the navigation controller
- *   refuses to write into a surface nobody draws), so the open is retried with
- *   a short backoff and abandoned the moment the session changes again.
+ *   seat holds no binding — a session switch remounts the seat's subtree, so
+ *   there is a window with none, and the controller refuses to write into a
+ *   surface nobody draws — so the open is retried with a short backoff and
+ *   abandoned the moment the session changes again.
  *
  * Everything is resolved through duck-typed services, so a composition without
  * `ctx.sessions` (or without the sidebar controller) is a silent no-op.
@@ -42,7 +47,7 @@ export interface SessionsLike {
 export interface AutoOpenOptions {
   ctx: ClientContext
   runtime: NotebookRuntime
-  /** Open the Notebook tab (returns false when the surface is not mounted yet). */
+  /** Open the Notebook tab (returns false when the seat holds no binding yet). */
   open: () => boolean
   /** Retry schedule; overridable for tests. */
   retryDelaysMs?: readonly number[]
@@ -89,10 +94,28 @@ export function createAutoOpenWatcher(options: AutoOpenOptions): AutoOpenWatcher
     timer = null
   }
 
+  /**
+   * Whether a `false` in {@link NotebookRuntime.getPrefs} is the user's answer
+   * or merely the default before the document has been read (v0.2.3).
+   */
+  const preferenceIsKnown = (): boolean => {
+    try {
+      return runtime.prefsReady === undefined || runtime.prefsReady() === true
+    } catch {
+      // An unreadable readiness probe must not wedge the watcher: treat the
+      // half-read prefs as an answer, which is the pre-v0.2.3 behaviour.
+      return true
+    }
+  }
+
   /** Try to open, retrying while the session stays the one we opened for. */
   const attemptOpen = (sessionId: string): void => {
     if (disposed) return
-    if (runtime.getPrefs()?.autoOpenOnNewSession !== true) return
+    // Prefs hydrate asynchronously, so "off" may still mean "not read yet".
+    // Giving up on it loses the gesture for good (the watcher only ever reacts
+    // to session changes), so an unknown answer keeps the retry schedule
+    // alive — the attempts themselves stay gated by the real preference.
+    if (runtime.getPrefs()?.autoOpenOnNewSession !== true && preferenceIsKnown()) return
     if (current !== sessionId) return
     if (attempt >= retryDelays.length) return
 
@@ -184,9 +207,17 @@ export function createAutoOpenWatcher(options: AutoOpenOptions): AutoOpenWatcher
 }
 
 /**
- * Wire the watcher to the native right sidebar: `openTab` is the whole gesture
- * (it also expands the panel — content the user cannot see is not opened), with
- * a belt-and-braces `toggleExpanded` for a version whose `openTab` does not.
+ * Wire the watcher to the native right sidebar: `openTab` is the whole gesture.
+ *
+ * It expands the column itself — the controller plans `setExpanded(true)` in the
+ * same intent as the open, because content the user cannot see is not opened —
+ * so nothing may be added after it. In particular, never read `isExpanded()`
+ * and "correct" a `false`: the controller answers that from the surface
+ * snapshot the seat bound at its LAST RENDER, so a collapsed panel still reads
+ * `false` immediately after a successful open, and the `toggleExpanded()` this
+ * used to call then flipped the freshly-set `expanded: true` back to `false` —
+ * the open revealed the column and the correction collapsed it again, which is
+ * how v0.2.2 shipped an auto-open that never opened anything (fixed in v0.2.3).
  *
  * @returns the disposer registered with the host.
  */
@@ -203,15 +234,9 @@ export function attachAutoOpen(
     ctx,
     runtime,
     () => {
-      // Throws while the session's surface is not mounted: that IS the retry signal.
+      // Throws while the seat holds no binding (a switch remounts it): that IS
+      // the retry signal.
       right.openTab(kind)
-      if (typeof right.isExpanded === 'function' && right.isExpanded() === false) {
-        try {
-          right.toggleExpanded()
-        } catch {
-          // an unexpandable panel is still an opened tab
-        }
-      }
       return true
     },
     options,
